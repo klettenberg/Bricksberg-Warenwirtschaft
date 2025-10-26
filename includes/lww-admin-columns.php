@@ -1,18 +1,23 @@
 <?php
 /**
- * Modul: Admin Spalten Anpassungen (NEU in v8.4, Stand v9.0)
+ * Modul: Admin Spalten Anpassungen (v9.5)
  *
  * Fügt benutzerdefinierte Spalten zu den Admin-Listenansichten hinzu
- * (z.B. Farbvorschau für lww_color).
+ * (z.B. Farbvorschau, Thumbnails).
  */
 if (!defined('ABSPATH')) exit;
 
 /**
+ * =========================================================================
+ * SPALTEN FÜR 'lww_color' (Farben)
+ * =========================================================================
+ */
+
+/**
  * Fügt neue Spalten zur lww_color Liste hinzu.
- * Hook: manage_{post_type}_posts_columns
  */
 function lww_add_color_columns($columns) {
-    // Füge die 'color_preview'-Spalte nach der 'title'-Spalte ein
+    // Füge die Spalten nach der 'title'-Spalte ein
     $new_columns = [];
     foreach ($columns as $key => $title) {
         $new_columns[$key] = $title;
@@ -22,41 +27,53 @@ function lww_add_color_columns($columns) {
             $new_columns['rebrickable_id'] = __('Rebrickable ID', 'lego-wawi');
         }
     }
-    // Entferne die Standard-Datumsspalte, falls gewünscht
-    unset($new_columns['date']);
+    unset($new_columns['date']); // Datum entfernen
     return $new_columns;
 }
 add_filter('manage_lww_color_posts_columns', 'lww_add_color_columns');
 
 /**
  * Füllt die benutzerdefinierten Spalten in der lww_color Liste mit Inhalt.
- * Hook: manage_{post_type}_posts_custom_column
  */
 function lww_render_color_columns($column_name, $post_id) {
     switch ($column_name) {
         case 'color_preview':
-            $rgb = get_post_meta($post_id, '_rgb', true);
+            $rgb = get_post_meta($post_id, 'lww_rgb_hex', true); // Meta-Key korrigiert
+            $is_trans = get_post_meta($post_id, 'lww_is_transparent', true);
+            $style = '';
+            $class = 'lww-color-preview'; // CSS-Klasse aus lww-admin-styles.css
+            $inner_style = '';
+
             if ($rgb) {
-                // Erstellt ein kleines Farbfeld
-                printf(
-                    '<div style="width: 40px; height: 20px; background-color: %s; border: 1px solid #ccc;" title="%s"></div>',
+                if ($is_trans) {
+                    $class .= ' transparent'; // Klasse für transparenten Hintergrund
+                     // Setze die tatsächliche Farbe auf ein inneres Element
+                    $inner_style = 'style="background-color: #' . esc_attr($rgb) . '; opacity: 0.7;"';
+                } else {
+                    $style = 'style="background-color: #' . esc_attr($rgb) . ';"';
+                }
+                 printf(
+                    '<div class="%s" %s title="#%s"><div class="lww-color-preview-inner" %s></div></div>',
+                    esc_attr($class),
+                    $style, // Style für das äußere Div (nur bei nicht-transparent)
                     esc_attr($rgb),
-                    esc_attr($rgb) // Zeigt den RGB-Wert als Tooltip
-                );
+                    $inner_style // Style für das innere Div (nur bei transparent)
+                 );
+
             } else {
                 echo '---';
             }
             break;
 
         case 'color_rgb':
-            $rgb = get_post_meta($post_id, '_rgb', true);
-            echo $rgb ? esc_html($rgb) : '---';
+            $rgb = get_post_meta($post_id, 'lww_rgb_hex', true); // Meta-Key korrigiert
+            echo $rgb ? '#' . esc_html($rgb) : '---';
             break;
 
         case 'rebrickable_id':
-            $rb_id = get_post_meta($post_id, '_rebrickable_id', true);
-             if ($rb_id) {
-                 // Link zur Rebrickable-Farbseite
+             // Meta-Key korrigiert von _rebrickable_id zu _lww_rebrickable_id
+            $rb_id = get_post_meta($post_id, '_lww_rebrickable_id', true); 
+             if ($rb_id || $rb_id === 0 || $rb_id === '0') { // Rebrickable ID 0 ist gültig (Unknown)
                  printf(
                     '<a href="https://rebrickable.com/colors/%d/" target="_blank">%d</a>',
                     absint($rb_id),
@@ -72,77 +89,90 @@ add_action('manage_lww_color_posts_custom_column', 'lww_render_color_columns', 1
 
 /**
  * Macht die Rebrickable ID Spalte sortierbar.
- * Hook: manage_edit-{post_type}_sortable_columns
  */
 function lww_make_color_columns_sortable($columns) {
-    $columns['rebrickable_id'] = '_rebrickable_id'; // Sortiere nach dem Meta-Key
+     // Meta-Key korrigiert
+    $columns['rebrickable_id'] = '_lww_rebrickable_id';
     return $columns;
 }
 add_filter('manage_edit-lww_color_sortable_columns', 'lww_make_color_columns_sortable');
 
 /**
  * Passt die WP_Query an, wenn nach der Rebrickable ID sortiert wird.
- * Hook: pre_get_posts
  */
 function lww_sort_color_by_rebrickable_id($query) {
-    // Nur im Admin-Bereich, nur für die Haupt-Query und nur für lww_color Posts
     if (!is_admin() || !$query->is_main_query() || $query->get('post_type') !== 'lww_color') {
         return;
     }
 
     $orderby = $query->get('orderby');
 
-    if ('_rebrickable_id' === $orderby) {
-        $query->set('meta_key', '_rebrickable_id');
-        // Wichtig: Meta-Werte als Zahlen sortieren
-        $query->set('orderby', 'meta_value_num');
+     // Meta-Key korrigiert
+    if ('_lww_rebrickable_id' === $orderby) {
+        $query->set('meta_key', '_lww_rebrickable_id');
+        $query->set('orderby', 'meta_value_num'); // Als Zahl sortieren
     }
 }
 add_action('pre_get_posts', 'lww_sort_color_by_rebrickable_id');
 
+
 /**
  * =========================================================================
- * THUMBNAIL-SPALTEN FÜR PARTS, SETS & MINIFIGS
+ * THUMBNAIL-SPALTEN FÜR PARTS, SETS & MINIFIGS (NEU)
  * =========================================================================
  */
 
 /**
  * Fügt die Spalte "Bild" zu den CPT-Listen hinzu.
- * Diese Funktion wird für Parts, Sets und Minifigs wiederverwendet.
+ * Wird für Parts, Sets und Minifigs wiederverwendet.
  */
 function lww_add_common_thumbnail_column($columns) {
     $cb = $columns['cb'] ?? ''; // Checkbox sichern
     if ($cb) {
-        unset($columns['cb']); // Entfernen, um sie an den Anfang zu setzen
+        unset($columns['cb']); // Temporär entfernen
     }
     
+    // Neue Spaltenstruktur: Checkbox, Bild, Rest
     $new_columns = [
-        'cb' => $cb,
+        'cb' => $cb, // Checkbox wieder an den Anfang
         'thumbnail' => __('Bild', 'lego-wawi'),
     ];
     
-    // Fügt die neue Spalte direkt nach der Checkbox ein
-    return array_merge($new_columns, $columns);
+    return array_merge($new_columns, $columns); // Fügt Bild nach Checkbox ein
 }
 
 /**
  * Rendert das Beitragsbild (Thumbnail) in der "Bild"-Spalte.
- * Diese Funktion wird für Parts, Sets und Minifigs wiederverwendet.
+ * Wird für Parts, Sets und Minifigs wiederverwendet.
  */
 function lww_render_common_thumbnail_column($column_name, $post_id) {
     if ($column_name === 'thumbnail') {
-        // Definiere eine einheitliche Größe für die Thumbnails
-        $thumb_size = [60, 60]; 
+        $thumb_size = [60, 60]; // Breite, Höhe in Pixeln
+        $edit_link = get_edit_post_link($post_id);
+
+        echo '<a href="' . esc_url($edit_link) . '" style="display:inline-block; width:' . $thumb_size[0] . 'px; height:' . $thumb_size[1] . 'px; text-align:center; background:#f0f0f1; border:1px solid #ddd; vertical-align:middle;">';
         
         if (has_post_thumbnail($post_id)) {
-            // Zeige das Bild, verlinkt zur Bearbeitungsseite
-            echo '<a href="' . get_edit_post_link($post_id) . '" style="display:inline-block; width: ' . $thumb_size[0] . 'px; height: ' . $thumb_size[1] . 'px; text-align: center;">';
-            the_post_thumbnail($thumb_size); 
-            echo '</a>';
+            // Zeige das Beitragsbild mit der definierten Größe
+            the_post_thumbnail($thumb_size, ['style' => 'max-width:100%; height:auto; display:block;']); 
         } else {
-            // Zeige einen grauen Platzhalter, wenn kein Bild vorhanden ist
-            echo '<span class.="dashicons dashicons-format-image" style="font-size: ' . $thumb_size[0] . 'px; line-height: 1; width: ' . $thumb_size[0] . 'px; height: ' . $thumb_size[1] . 'px; color: #eee; background: #f9f9f9; border: 1px solid #eee; box-sizing: border-box; display:inline-block;"></span>';
+            // Zeige einen Platzhalter (z.B. Dashicon)
+             // Prüfe, ob das Plugin-URL definiert ist, bevor es verwendet wird
+             if (defined('LWW_PLUGIN_URL')) {
+                 $placeholder_url = LWW_PLUGIN_URL . 'assets/images/placeholder.png'; // Beispielpfad
+                 // Prüfe, ob die Platzhalterdatei existiert
+                 if (file_exists(LWW_PLUGIN_PATH . 'assets/images/placeholder.png')) {
+                      echo '<img src="' . esc_url($placeholder_url) . '" alt="' . __('Kein Bild', 'lego-wawi') . '" width="' . $thumb_size[0] . '" height="' . $thumb_size[1] . '" style="object-fit:contain;">';
+                 } else {
+                      // Fallback, wenn Bilddatei nicht existiert
+                      echo '<span class="dashicons dashicons-format-image" style="font-size: ' . ($thumb_size[0] * 0.8) . 'px; line-height: ' . $thumb_size[1] . 'px; width: 100%; height: 100%; color: #ccc;"></span>';
+                 }
+             } else {
+                 // Fallback, wenn Plugin-URL nicht verfügbar ist
+                 echo '<span class="dashicons dashicons-format-image" style="font-size: ' . ($thumb_size[0] * 0.8) . 'px; line-height: ' . $thumb_size[1] . 'px; width: 100%; height: 100%; color: #ccc;"></span>';
+             }
         }
+        echo '</a>';
     }
 }
 
@@ -158,5 +188,6 @@ add_action('manage_lww_set_posts_custom_column', 'lww_render_common_thumbnail_co
 add_filter('manage_lww_minifig_posts_columns', 'lww_add_common_thumbnail_column');
 add_action('manage_lww_minifig_posts_custom_column', 'lww_render_common_thumbnail_column', 10, 2);
 
+// TODO: Spalten für 'lww_inventory_item' hinzufügen (z.B. Menge, Preis, Zustand, verknüpftes Teil/Farbe)
 
 ?>

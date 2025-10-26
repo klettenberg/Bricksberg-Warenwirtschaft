@@ -3,7 +3,7 @@
  * Plugin Name:       Bricksberg Warenwirtschaft (WaWi)
  * Plugin URI:        https://bricksberg.eu/
  * Description:       Synchronisiert WooCommerce mit BrickOwl (Master), BrickLink und Rebrickable über CSV-Import.
- * Version:           0.9.6
+ * Version:           0.9.8
  * Author:            Olaf Ziörjen
  * Author URI:        https://bricksberg.eu/
  * License:           GPL v2 or later
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin-Konstanten
-define('LWW_PLUGIN_VERSION', '0.9.6'); // Version erhöht
+define('LWW_PLUGIN_VERSION', '0.9.8'); // Version erhöht
 define('LWW_PLUGIN_SLUG', 'lego_wawi_admin_page');
 define('LWW_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('LWW_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -31,11 +31,30 @@ require_once LWW_PLUGIN_PATH . 'includes/lww-dashboard.php';        // Dashboard
 require_once LWW_PLUGIN_PATH . 'includes/lww-jobs.php';             // Job-Queue-Tab
 require_once LWW_PLUGIN_PATH . 'includes/lww-inventory-ui.php';     // Inventar UI Seite
 require_once LWW_PLUGIN_PATH . 'includes/lww-admin-columns.php';    // Admin Spalten (Farbvorschau etc.)
-//require_once LWW_PLUGIN_PATH . 'includes/lww-import-functions.php'; // NEU: Import-Logik ausgelagert
- LWW_PLUGIN_PATH . 'includes/lww-import-handlers.php';  // Upload-Verarbeitung
+// require_once LWW_PLUGIN_PATH . 'includes/lww-import-functions.php'; // VERALTET
+require_once LWW_PLUGIN_PATH . 'includes/lww-import-handlers.php';  // Upload-Verarbeitung
 require_once LWW_PLUGIN_PATH . 'includes/lww-batch-processor.php'; // Cron-Jobs / Hintergrund-Verarbeitung
-require_once LWW_PLUGIN_PATH . 'includes/lww-import-catalog-logic.php'; // NEU: Zeilen-Import-Logik
 
+// --- NEU: Lade alle Import-Handler-Klassen ---
+require_once LWW_PLUGIN_PATH . 'includes/import-handlers/interface-lww-import-handler.php';
+require_once LWW_PLUGIN_PATH . 'includes/import-handlers/class-lww-import-handler-base.php';
+
+// Lade automatisch alle 'class-lww-import-*.php' Dateien aus dem Verzeichnis
+$handler_files = glob(LWW_PLUGIN_PATH . 'includes/import-handlers/class-lww-import-*.php');
+if ($handler_files) {
+    foreach ($handler_files as $handler_file) {
+        require_once $handler_file;
+    }
+}
+// --- Ende Lade-Handler ---
+
+
+// Lade jeden einzelnen Handler (oder verwende einen Autoloader)
+$handler_files = glob(LWW_PLUGIN_PATH . 'includes/import-handlers/class-lww-import-*-handler.php');
+foreach ($handler_files as $handler_file) {
+    require_once $handler_file;
+}
+// --- Ende Lade-Handler ---
 
 /**
  * Lädt die Admin-Stylesheets UND Scripte.
