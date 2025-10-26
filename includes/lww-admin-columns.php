@@ -100,8 +100,63 @@ function lww_sort_color_by_rebrickable_id($query) {
 }
 add_action('pre_get_posts', 'lww_sort_color_by_rebrickable_id');
 
+/**
+ * =========================================================================
+ * THUMBNAIL-SPALTEN FÜR PARTS, SETS & MINIFIGS
+ * =========================================================================
+ */
 
-// TODO: Ähnliche Funktionen können für andere CPTs (lww_part, lww_inventory_item etc.) hinzugefügt werden,
-// um z.B. PartNum, BOID, Menge, Preis etc. als Spalten anzuzeigen.
+/**
+ * Fügt die Spalte "Bild" zu den CPT-Listen hinzu.
+ * Diese Funktion wird für Parts, Sets und Minifigs wiederverwendet.
+ */
+function lww_add_common_thumbnail_column($columns) {
+    $cb = $columns['cb'] ?? ''; // Checkbox sichern
+    if ($cb) {
+        unset($columns['cb']); // Entfernen, um sie an den Anfang zu setzen
+    }
+    
+    $new_columns = [
+        'cb' => $cb,
+        'thumbnail' => __('Bild', 'lego-wawi'),
+    ];
+    
+    // Fügt die neue Spalte direkt nach der Checkbox ein
+    return array_merge($new_columns, $columns);
+}
+
+/**
+ * Rendert das Beitragsbild (Thumbnail) in der "Bild"-Spalte.
+ * Diese Funktion wird für Parts, Sets und Minifigs wiederverwendet.
+ */
+function lww_render_common_thumbnail_column($column_name, $post_id) {
+    if ($column_name === 'thumbnail') {
+        // Definiere eine einheitliche Größe für die Thumbnails
+        $thumb_size = [60, 60]; 
+        
+        if (has_post_thumbnail($post_id)) {
+            // Zeige das Bild, verlinkt zur Bearbeitungsseite
+            echo '<a href="' . get_edit_post_link($post_id) . '" style="display:inline-block; width: ' . $thumb_size[0] . 'px; height: ' . $thumb_size[1] . 'px; text-align: center;">';
+            the_post_thumbnail($thumb_size); 
+            echo '</a>';
+        } else {
+            // Zeige einen grauen Platzhalter, wenn kein Bild vorhanden ist
+            echo '<span class.="dashicons dashicons-format-image" style="font-size: ' . $thumb_size[0] . 'px; line-height: 1; width: ' . $thumb_size[0] . 'px; height: ' . $thumb_size[1] . 'px; color: #eee; background: #f9f9f9; border: 1px solid #eee; box-sizing: border-box; display:inline-block;"></span>';
+        }
+    }
+}
+
+// --- Hooks für 'lww_part' (Teile) ---
+add_filter('manage_lww_part_posts_columns', 'lww_add_common_thumbnail_column');
+add_action('manage_lww_part_posts_custom_column', 'lww_render_common_thumbnail_column', 10, 2);
+
+// --- Hooks für 'lww_set' (Sets) ---
+add_filter('manage_lww_set_posts_columns', 'lww_add_common_thumbnail_column');
+add_action('manage_lww_set_posts_custom_column', 'lww_render_common_thumbnail_column', 10, 2);
+
+// --- Hooks für 'lww_minifig' (Minifiguren) ---
+add_filter('manage_lww_minifig_posts_columns', 'lww_add_common_thumbnail_column');
+add_action('manage_lww_minifig_posts_custom_column', 'lww_render_common_thumbnail_column', 10, 2);
+
 
 ?>

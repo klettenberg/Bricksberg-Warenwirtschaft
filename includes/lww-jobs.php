@@ -371,6 +371,7 @@ class LWW_Jobs_List_Table extends WP_List_Table {
 /**
  * Rendert den Inhalt des "Job-Warteschlange"-Tabs mithilfe der WP_List_Table.
  */
+// NEU:
 function lww_render_tab_jobs() {
     // Erstellt eine Instanz unserer Job-Tabelle
     $job_list_table = new LWW_Jobs_List_Table();
@@ -379,24 +380,31 @@ function lww_render_tab_jobs() {
 
     ?>
     <div class="lww-admin-form lww-card">
+
+        <div style="float: right; margin-top: -10px; padding: 5px; background: #f9f9f9; border: 1px solid #eee; border-radius: 4px;">
+            <label>
+                <input type="checkbox" id="lww-job-refresh-toggle" checked>
+                <?php _e('Automatisch aktualisieren', 'lego-wawi'); ?>
+            </label>
+        </div>
+
         <h2><?php _e('Job-Warteschlange & Verlauf', 'lego-wawi'); ?></h2>
         <p><?php _e('Hier siehst du alle laufenden, wartenden und abgeschlossenen Import-Jobs.', 'lego-wawi'); ?></p>
 
         <?php $job_list_table->views(); // Zeigt die Filter-Links (Alle | Wartend | Laufend | ...) ?>
 
         <form id="jobs-filter" method="post">
-            <!-- Wichtig: method="post" für Bulk Actions -->
-            <!-- Versteckte Felder für die Tabelle ( Seitennummer, Tab ) -->
-            <input type="hidden" name="page" value="<?php echo esc_attr($_REQUEST['page']); ?>" />
-             <input type="hidden" name="tab" value="tab_jobs" />
-            <?php // Nonce wird von WP_List_Table::display() hinzugefügt, wenn Bulk Actions vorhanden sind ?>
-            <?php $job_list_table->display(); // Zeigt die eigentliche Tabelle an ?>
+            <input type="hidden" name="page" value="<?php echo esc_attr($_REQUEST['page'] ?? LWW_PLUGIN_SLUG); ?>" />
+            <input type="hidden" name="tab" value="tab_jobs" />
+
+            <div id="lww-job-list-container">
+                <?php $job_list_table->display(); // Zeigt die eigentliche Tabelle an ?>
+            </div>
+
         </form>
     </div>
     <?php
 }
-
-
 // --- Handler für Job-Aktionen (Abbrechen, Löschen, Wiederherstellen) ---
 
 /**
@@ -502,4 +510,41 @@ function lww_delete_permanently_job_handler() {
     exit;
 }
 add_action('admin_post_lww_delete_permanently_job', 'lww_delete_permanently_job_handler');
+
+ /**
+ * =========================================================================
+ * AJAX HANDLER FÜR JOB-LISTE
+ * =========================================================================
+ */
+
+/**
+ * Antwortet auf die AJAX-Anfrage von lww-admin-jobs.js.
+ * Erstellt die WP_List_Table und sendet nur das HTML der Tabelle zurück.
+ */
+function lww_ajax_get_job_list_table() {
+    // 1. Sicherheit prüfen
+    check_ajax_referer('lww_job_list_nonce');
+
+    // 2. Berechtigungen prüfen
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(['message' => __('Keine Berechtigung.', 'lego-wawi')]);
+    }
+
+    // 3. WP_List_Table neu erstellen (genau wie in lww_render_tab_jobs)
+    // WICHTIG: Die List Table liest die $_REQUEST-Parameter (Sortierung, Filter, Seite),
+    // die wir im JS mitgeschickt haben.
+    $job_list_table = new LWW_Jobs_List_Table();
+    $job_list_table->prepare_items();
+
+    // 4. HTML der Tabelle per Output Buffering abfangen
+    ob_start();
+    $job_list_table->display();
+    $table_html = ob_get_clean();
+
+    // 5. HTML als Erfolgs-Antwort zurücksenden
+    wp_send_json_success($table_html);
+}
+// Hook für den AJAX-Aufruf (nur für eingeloggte Admin-Benutzer)
+add_action('wp_ajax_lww_get_job_list_table', 'lww_ajax_get_job_list_table');
+
 ?>

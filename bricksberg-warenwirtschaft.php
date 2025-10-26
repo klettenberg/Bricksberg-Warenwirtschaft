@@ -31,31 +31,70 @@ require_once LWW_PLUGIN_PATH . 'includes/lww-dashboard.php';        // Dashboard
 require_once LWW_PLUGIN_PATH . 'includes/lww-jobs.php';             // Job-Queue-Tab
 require_once LWW_PLUGIN_PATH . 'includes/lww-inventory-ui.php';     // Inventar UI Seite
 require_once LWW_PLUGIN_PATH . 'includes/lww-admin-columns.php';    // Admin Spalten (Farbvorschau etc.)
-require_once LWW_PLUGIN_PATH . 'includes/lww-import-functions.php'; // NEU: Import-Logik ausgelagert
-require_once LWW_PLUGIN_PATH . 'includes/lww-import-handlers.php';  // Upload-Verarbeitung
+//require_once LWW_PLUGIN_PATH . 'includes/lww-import-functions.php'; // NEU: Import-Logik ausgelagert
+ LWW_PLUGIN_PATH . 'includes/lww-import-handlers.php';  // Upload-Verarbeitung
 require_once LWW_PLUGIN_PATH . 'includes/lww-batch-processor.php'; // Cron-Jobs / Hintergrund-Verarbeitung
+require_once LWW_PLUGIN_PATH . 'includes/lww-import-catalog-logic.php'; // NEU: Zeilen-Import-Logik
+
 
 /**
- * Lädt die Admin-Stylesheets.
+ * Lädt die Admin-Stylesheets UND Scripte.
  */
-function lww_enqueue_admin_styles($hook) {
-    // Optimierte Prüfung für LWW Seiten und Listenansichten
-    $is_lww_page = (strpos($hook, LWW_PLUGIN_SLUG) !== false || strpos($hook, 'lww_inventory_ui') !== false);
+function lww_enqueue_admin_assets($hook) {
     $screen = get_current_screen();
-    $is_lww_list_table = $screen && (
-        (isset($screen->post_type) && in_array($screen->post_type, ['lww_part', 'lww_set', 'lww_minifig', 'lww_color', 'lww_inventory_item', 'lww_job'])) || // Job hinzugefügt
-        (isset($screen->taxonomy) && in_array($screen->taxonomy, ['lww_theme', 'lww_part_category']))
+    if (!$screen) return;
+
+    // 1. STYLES (Laden auf allen LWW-Seiten)
+    $is_lww_page_or_list = (
+        strpos($hook, LWW_PLUGIN_SLUG) !== false || 
+        strpos($hook, 'lww_inventory_ui') !== false ||
+        (isset($screen->post_type) && strpos($screen->post_type, 'lww_') === 0) ||
+        (isset($screen->taxonomy) && strpos($screen->taxonomy, 'lww_') === 0)
     );
 
-    if ($is_lww_page || $is_lww_list_table) {
+    if ($is_lww_page_or_list) {
         $css_file_path = LWW_PLUGIN_PATH . 'assets/css/lww-admin-styles.css';
         $css_file_url = LWW_PLUGIN_URL . 'assets/css/lww-admin-styles.css';
         if (file_exists($css_file_path)) {
              wp_enqueue_style('lww-admin-styles', $css_file_url, [], LWW_PLUGIN_VERSION);
         }
     }
+    
+    // 2. SCRIPTE (Nur auf der Job-Seite laden)
+    // Finde die korrekte "hook_suffix" (ID) der Haupt-Adminseite
+    // Sie ist meist 'toplevel_page_PLUGIN_SLUG'
+    $main_page_hook = 'toplevel_page_' . LWW_PLUGIN_SLUG;
+    
+    // Prüfe, ob wir auf der Hauptseite sind UND der 'tab_jobs' aktiv ist
+    if ($hook === $main_page_hook && isset($_GET['tab']) && $_GET['tab'] === 'tab_jobs') {
+        
+        $js_file_path = LWW_PLUGIN_PATH . 'assets/js/lww-admin-jobs.js';
+        $js_file_url = LWW_PLUGIN_URL . 'assets/js/lww-admin-jobs.js';
+        
+        if (file_exists($js_file_path)) {
+            // Lade das Script
+             wp_enqueue_script(
+                'lww-admin-jobs',
+                $js_file_url,
+                ['jquery'], // Abhängigkeit von jQuery
+                LWW_PLUGIN_VERSION,
+                true // Lade im Footer
+             );
+             
+             // Übergebe Daten an das Script (AJAX-URL und Sicherheits-Nonce)
+             wp_localize_script(
+                'lww-admin-jobs',
+                'lww_jobs_data', // Dieses Objekt ist im JS verfügbar
+                [
+                    'ajax_url' => admin_url('admin-ajax.php'),
+                    'nonce'    => wp_create_nonce('lww_job_list_nonce') // Eindeutige Nonce für Sicherheit
+                ]
+             );
+        }
+    }
 }
-add_action('admin_enqueue_scripts', 'lww_enqueue_admin_styles');
+// Wichtig: Den Action-Hook auf den neuen Funktionsnamen aktualisieren
+add_action('admin_enqueue_scripts', 'lww_enqueue_admin_assets');
 
 /**
  * Aktionen bei Plugin-Aktivierung.

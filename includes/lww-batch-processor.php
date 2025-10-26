@@ -8,12 +8,30 @@
  */
 if (!defined('ABSPATH')) exit;
 
-// Funktion lww_add_cron_interval unverändert...
+// NEU:
 function lww_add_cron_interval($schedules) {
+    // Fügt benutzerdefinierte Intervalle hinzu, falls sie nicht existieren
     if (!isset($schedules['lww_every_minute'])) {
-        $schedules['lww_every_minute'] = [ 'interval' => 60, 'display' => esc_html__('Jede Minute (LWW)', 'lego-wawi')];
-    } return $schedules;
+        $schedules['lww_every_minute'] = [
+            'interval' => 60, // 60 Sekunden
+            'display'  => esc_html__('Jede Minute (LWW Standard)', 'lego-wawi')
+        ];
+    }
+    if (!isset($schedules['lww_every_5_minutes'])) {
+        $schedules['lww_every_5_minutes'] = [
+            'interval' => 300, // 5 * 60 Sekunden
+            'display'  => esc_html__('Alle 5 Minuten (LWW)', 'lego-wawi')
+        ];
+    }
+    if (!isset($schedules['lww_every_15_minutes'])) {
+        $schedules['lww_every_15_minutes'] = [
+            'interval' => 900, // 15 * 60 Sekunden
+            'display'  => esc_html__('Alle 15 Minuten (LWW)', 'lego-wawi')
+        ];
+    }
+    return $schedules;
 }
+
 add_filter('cron_schedules', 'lww_add_cron_interval');
 
 // Hook unverändert...
@@ -189,21 +207,6 @@ function lww_log_to_job($job_id, $message){ $log=get_post_meta($job_id,'_job_log
 function lww_log_system_event($message){ if(defined('WP_DEBUG_LOG')&&WP_DEBUG_LOG===true){error_log('[LWW System] '.$message);}}
 
 // --- IMPORT-FUNKTIONEN (Eine pro CSV-Typ) ---
-// (Alle lww_import_*_data Funktionen unverändert)
-function lww_import_colors_data($job_id, $data, $header_map){ /* ... */ }
-function lww_import_themes_data($job_id, $data, $header_map){ /* ... */ }
-function lww_import_part_categories_data($job_id, $data, $header_map){ /* ... */ }
-function lww_import_parts_data($job_id, $data, $header_map){ /* ... */ }
-function lww_import_sets_data($job_id, $data, $header_map) { /* TODO */ }
-function lww_import_minifigs_data($job_id, $data, $header_map) { /* TODO */ }
-function lww_import_elements_data($job_id, $data, $header_map) { /* TODO */ }
-function lww_import_part_relationships_data($job_id, $data, $header_map) { /* TODO */ }
-function lww_import_inventories_data($job_id, $data, $header_map) { /* TODO */ }
-function lww_import_inventory_parts_data($job_id, $data, $header_map) { /* TODO */ }
-function lww_import_inventory_sets_data($job_id, $data, $header_map) { /* TODO */ }
-function lww_import_inventory_minifigs_data($job_id, $data, $header_map) { /* TODO */ }
-function lww_import_inventory_data($job_id, $data, $header_map){ /* ... */ }
-function lww_find_part_by_boid($boid){ /* ... */ return 0; }
-function lww_find_color_by_name($color_name){ /* ... */ }
+
 
 ?>
