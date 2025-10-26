@@ -1,8 +1,8 @@
 <?php
 /**
- * Modul: Job-Warteschlange (v9.0)
+ * Modul: Job-Warteschlange (v9.5 - Mit AJAX Refresh & Progress)
  * Rendert den "Job-Warteschlange"-Tab und verwaltet die Job-Aktionen.
- * Zeigt jetzt auch den Job-Typ 'inventory_import'.
+ * Enthält AJAX-Handler für Live-Updates.
  */
 if (!defined('ABSPATH')) exit;
 
@@ -22,9 +22,9 @@ class LWW_Jobs_List_Table extends WP_List_Table {
      */
     public function __construct() {
         parent::__construct([
-            'singular' => __('Job', 'lego-wawi'),    // Singular Bezeichnung des Items
-            'plural'   => __('Jobs', 'lego-wawi'),   // Plural Bezeichnung der Items
-            'ajax'     => false                     // Keine AJAX-Funktionalität für diese Tabelle
+            'singular' => __('Job', 'lego-wawi'),
+            'plural'   => __('Jobs', 'lego-wawi'),
+            'ajax'     => false // AJAX wird manuell über separates JS gehandhabt
         ]);
     }
 
@@ -34,12 +34,12 @@ class LWW_Jobs_List_Table extends WP_List_Table {
      */
     public function get_columns() {
         return [
-            'cb'           => '<input type="checkbox" />', // Checkbox für Bulk-Aktionen
-            'title'        => __('Job', 'lego-wawi'),       // Job-Titel (z.B. "Katalog-Import vom ...")
-            'job_type'     => __('Typ', 'lego-wawi'),       // Art des Jobs (Katalog oder Inventar)
-            'job_status'   => __('Status', 'lego-wawi'),    // Aktueller Status (Wartend, Laufend, etc.)
-            'job_progress' => __('Fortschritt', 'lego-wawi'),// Letzte Log-Nachricht als Fortschrittsanzeige
-            'date'         => __('Erstellt', 'lego-wawi')   // Erstellungsdatum des Jobs
+            'cb'           => '<input type="checkbox" />',
+            'title'        => __('Job', 'lego-wawi'),
+            'job_type'     => __('Typ', 'lego-wawi'),
+            'job_status'   => __('Status', 'lego-wawi'),
+            'job_progress' => __('Fortschritt', 'lego-wawi'), // Angepasste Anzeige
+            'date'         => __('Erstellt', 'lego-wawi')
         ];
     }
 
@@ -49,122 +49,150 @@ class LWW_Jobs_List_Table extends WP_List_Table {
      */
     public function get_sortable_columns() {
         return [
-            'title'      => ['title', false],          // Sortieren nach Titel
-            'job_type'   => ['job_type', false],       // Sortieren nach Job-Typ (über Metafeld)
-            'job_status' => ['post_status', false],   // Sortieren nach Post-Status
-            'date'       => ['date', true]            // Sortieren nach Datum (Standard, absteigend)
+            'title'      => ['title', false],
+            // Sortierung nach Metafeld _job_type muss via pre_get_posts gehandhabt werden (siehe unten)
+            'job_type'   => ['job_type', false],
+            'job_status' => ['post_status', false],
+            'date'       => ['date', true] // Standard Sortierung
         ];
     }
 
     /**
      * Bereitet die Daten für die Anzeige vor (Abrufen der Jobs, Paginierung, Sortierung).
+     * Wird sowohl für den initialen Ladevorgang als auch für AJAX-Anfragen verwendet.
      */
     public function prepare_items() {
         // Spalten-Header definieren
         $columns = $this->get_columns();
-        $hidden = []; // Keine versteckten Spalten
+        $hidden = [];
         $sortable = $this->get_sortable_columns();
         $this->_column_headers = [$columns, $hidden, $sortable];
 
-        // Paginierungsparameter
-        $per_page = 20; // Anzahl der Jobs pro Seite
-        $current_page = $this->get_pagenum(); // Aktuelle Seitennummer holen
-        $offset = ($current_page - 1) * $per_page; // Berechnen des Offsets für die DB-Abfrage
+        // Bulk Actions verarbeiten (nur bei POST-Requests, nicht bei AJAX)
+        // Die Nonce-Prüfung erfolgt in process_bulk_action selbst
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+             $this->process_bulk_action();
+        }
 
-        // Sortierungsparameter holen (oder Standardwerte verwenden)
-        $orderby = isset($_GET['orderby']) ? sanitize_key($_GET['orderby']) : 'date';
-        $order = isset($_GET['order']) ? sanitize_key($_GET['order']) : 'DESC';
 
-        // Meta-Key für Sortierung nach Job-Typ
-        $meta_key_order = ($orderby === 'job_type') ? '_job_type' : '';
+        // Paginierungsparameter (aus $_REQUEST holen, da es auch per AJAX kommen kann)
+        $per_page = 20;
+        $current_page = $this->get_pagenum(); // Diese Funktion nutzt $_REQUEST['paged']
+        $offset = ($current_page - 1) * $per_page;
 
-        // Argumente für die WP_Query zum Abrufen der Job-Posts
+        // Sortierungsparameter (aus $_REQUEST holen)
+        $orderby = isset($_REQUEST['orderby']) ? sanitize_key($_REQUEST['orderby']) : 'date';
+        $order = isset($_REQUEST['order']) && in_array(strtoupper($_REQUEST['order']), ['ASC', 'DESC']) ? strtoupper($_REQUEST['order']) : 'DESC';
+
+        // Filterparameter (aus $_REQUEST holen)
+        $post_status_filter = isset($_REQUEST['post_status']) ? sanitize_key($_REQUEST['post_status']) : '';
+
+        // Argumente für die WP_Query
         $args = [
-            'post_type'      => 'lww_job',                     // Nur Posts vom Typ 'lww_job'
-            'posts_per_page' => $per_page,                     // Anzahl pro Seite
-            'offset'         => $offset,                       // Offset für Paginierung
-            'orderby'        => ($orderby === 'job_type') ? 'meta_value' : $orderby, // Sortierung nach Titel, Datum, Status oder Meta-Wert
-            'order'          => $order,                        // Sortierrichtung (ASC oder DESC)
-            'meta_key'       => $meta_key_order,               // Meta-Key nur setzen, wenn nach Typ sortiert wird
-            'post_status'    => ['lww_pending', 'lww_running', 'lww_complete', 'lww_failed', 'trash'] // Alle relevanten Status anzeigen
+            'post_type'      => 'lww_job',
+            'posts_per_page' => $per_page,
+            'offset'         => $offset,
+            'orderby'        => $orderby,
+            'order'          => $order,
+            // Standardmäßig alle relevanten Status anzeigen, außer wenn gefiltert
+            'post_status'    => ($post_status_filter && $post_status_filter !== 'all')
+                                ? $post_status_filter
+                                : ['lww_pending', 'lww_running', 'lww_complete', 'lww_failed', 'trash']
         ];
-        $query = new WP_Query($args);
 
-        // Die gefundenen Posts als Items für die Tabelle setzen
+        // Spezielle Sortierung nach Metafeld '_job_type'
+        // Muss hier angepasst werden, da pre_get_posts bei AJAX nicht zuverlässig greift
+        if ($orderby === 'job_type') {
+             $args['meta_key'] = '_job_type';
+             $args['orderby'] = 'meta_value';
+        }
+
+
+        // Die Abfrage ausführen
+        $query = new WP_Query($args);
         $this->items = $query->posts;
 
-        // Paginierungs-Argumente für die WordPress-Paginierungs-Links setzen
-        $total_items = $query->found_posts; // Gesamtzahl der gefundenen Jobs
+        // Paginierungs-Argumente setzen
+        $total_items = $query->found_posts;
         $this->set_pagination_args([
             'total_items' => $total_items,
             'per_page'    => $per_page,
-            'total_pages' => ceil($total_items / $per_page) // Gesamtanzahl der Seiten berechnen
+            'total_pages' => ceil($total_items / $per_page)
         ]);
     }
 
     /**
-     * Standard-Renderer für Spalten, falls keine spezifische Methode existiert.
-     * Gibt zur Sicherheit den Inhalt des Items aus (sollte nicht vorkommen).
+     * Standard-Renderer für Spalten.
      */
     public function column_default($item, $column_name) {
-        // Normalerweise sollte für jede Spalte eine column_{Spaltenname}-Methode existieren.
-        // Diese Funktion ist ein Fallback.
         switch($column_name) {
              case 'date':
-                return get_the_date('', $item); // Formatiertes Datum
+                // Zeige das Erstellungsdatum an
+                 return mysql2date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), $item->post_date );
              default:
-                // Wenn Daten unerwartet sind, zur Sicherheit ausgeben
-                // return print_r($item, true); 
-                return '---'; // Oder einfach nichts
+                // Normalerweise sollte hier nichts ausgegeben werden
+                return '---';
         }
     }
 
     /**
-     * Rendert die Checkbox-Spalte für Bulk-Aktionen.
+     * Rendert die Checkbox-Spalte.
      */
     public function column_cb($item) {
         return sprintf(
-            '<input type="checkbox" name="job[]" value="%s" />', $item->ID // Checkbox mit der Job-ID als Wert
+            '<input type="checkbox" name="job[]" value="%s" />', $item->ID
         );
     }
 
     /**
-     * Rendert die "Job"-Titel-Spalte, inklusive der Aktionen (Abbrechen, Löschen).
+     * Rendert die "Job"-Titel-Spalte mit Aktionen.
      */
     public function column_title($item) {
-        $title = $item->post_title ? $item->post_title : __('(kein Titel)', 'lego-wawi'); // Holt den Post-Titel, Fallback
-        $actions = []; // Array für die Aktions-Links
+        $title = $item->post_title ? $item->post_title : __('(kein Titel)', 'lego-wawi');
+        $page_slug = LWW_PLUGIN_SLUG; // Slug der Hauptseite
+        $actions = [];
 
-        // "Abbrechen"-Aktion nur für laufende oder wartende Jobs anzeigen
+        // Basis-URL für Aktionen
+        $base_action_url = admin_url('admin-post.php');
+
+        // URL zum Job-Log (Detailansicht) - Optional, falls man eine Detailseite baut
+        // $view_log_url = admin_url('post.php?post=' . $item->ID . '&action=edit');
+        // $actions['view_log'] = sprintf('<a href="%s">%s</a>', esc_url($view_log_url), __('Details/Log', 'lego-wawi'));
+
+        // "Abbrechen"-Aktion für laufende oder wartende Jobs
         if (in_array($item->post_status, ['lww_pending', 'lww_running'])) {
-            // URL für die Abbruch-Aktion erstellen (nutzt admin-post.php für sichere Verarbeitung)
-            $cancel_url = wp_nonce_url( // Fügt einen Sicherheits-Nonce hinzu
-                admin_url('admin-post.php?action=lww_cancel_job&job_id=' . $item->ID), // Ziel-URL mit Job-ID
-                'lww_cancel_job_' . $item->ID // Eindeutige Nonce-Aktion
+            $cancel_nonce_action = 'lww_cancel_job_' . $item->ID;
+            $cancel_url = wp_nonce_url(add_query_arg(['action' => 'lww_cancel_job', 'job_id' => $item->ID], $base_action_url), $cancel_nonce_action);
+            $actions['cancel'] = sprintf('<a href="%s" class="lww-action-cancel" onclick="return confirm(\'%s\');">%s</a>',
+                esc_url($cancel_url),
+                esc_js(__('Möchtest du diesen Job wirklich abbrechen? Er wird als fehlgeschlagen markiert.', 'lego-wawi')),
+                __('Abbrechen', 'lego-wawi')
             );
-            $actions['cancel'] = sprintf('<a href="%s" class="lww-action-cancel">%s</a>', esc_url($cancel_url), __('Abbrechen', 'lego-wawi'));
         }
 
-        // "Löschen"-Aktion (verschiebt in den Papierkorb) immer anzeigen
-        // URL für die Lösch-Aktion erstellen
-        $delete_url = wp_nonce_url(
-             admin_url('admin-post.php?action=lww_delete_job&job_id=' . $item->ID),
-             'lww_delete_job_' . $item->ID
-        );
-        // Unterschiedliche Bezeichnung je nach Status (Papierkorb vs. Endgültig löschen)
+        // Aktionen basierend auf dem Papierkorb-Status
         if ($item->post_status === 'trash') {
-             // Aktionen für Items im Papierkorb
-             $untrash_url = wp_nonce_url(admin_url('admin-post.php?action=lww_untrash_job&job_id=' . $item->ID), 'lww_untrash_job_' . $item->ID);
-             $delete_permanently_url = wp_nonce_url(admin_url('admin-post.php?action=lww_delete_permanently_job&job_id=' . $item->ID), 'lww_delete_permanently_job_' . $item->ID);
+             // Im Papierkorb: Wiederherstellen & Endgültig löschen
+             $untrash_nonce_action = 'lww_untrash_job_' . $item->ID;
+             $untrash_url = wp_nonce_url(add_query_arg(['action' => 'lww_untrash_job', 'job_id' => $item->ID], $base_action_url), $untrash_nonce_action);
              $actions['untrash'] = sprintf('<a href="%s" class="lww-action-untrash">%s</a>', esc_url($untrash_url), __('Wiederherstellen', 'lego-wawi'));
-             $actions['delete_permanently'] = sprintf('<a href="%s" class="lww-action-delete">%s</a>', esc_url($delete_permanently_url), __('Endgültig löschen', 'lego-wawi'));
+
+             $delete_perm_nonce_action = 'lww_delete_permanently_job_' . $item->ID;
+             $delete_permanently_url = wp_nonce_url(add_query_arg(['action' => 'lww_delete_permanently_job', 'job_id' => $item->ID], $base_action_url), $delete_perm_nonce_action);
+             $actions['delete_permanently'] = sprintf('<a href="%s" class="lww-action-delete" onclick="return confirm(\'%s\');">%s</a>',
+                esc_url($delete_permanently_url),
+                esc_js(__('Möchtest du diesen Job wirklich endgültig löschen? Diese Aktion kann nicht rückgängig gemacht werden.', 'lego-wawi')),
+                __('Endgültig löschen', 'lego-wawi')
+             );
         } else {
-             // Aktion für Items, die nicht im Papierkorb sind
-             $actions['trash'] = sprintf('<a href="%s" class="lww-action-delete">%s</a>', esc_url($delete_url), __('Papierkorb', 'lego-wawi'));
+             // Nicht im Papierkorb: In Papierkorb verschieben
+             $trash_nonce_action = 'lww_delete_job_' . $item->ID;
+             $trash_url = wp_nonce_url(add_query_arg(['action' => 'lww_delete_job', 'job_id' => $item->ID], $base_action_url), $trash_nonce_action);
+             $actions['trash'] = sprintf('<a href="%s" class="lww-action-delete">%s</a>', esc_url($trash_url), __('Papierkorb', 'lego-wawi'));
         }
 
 
-        // Gibt den Titel und die darunter schwebenden Aktions-Links zurück
+        // Gibt den Titel und die Aktions-Links zurück
         return '<strong>' . esc_html($title) . '</strong>' . $this->row_actions($actions);
     }
 
@@ -172,55 +200,136 @@ class LWW_Jobs_List_Table extends WP_List_Table {
      * Rendert die "Status"-Spalte mit farbigen Badges.
      */
     public function column_job_status($item) {
-        $status = $item->post_status; // Holt den Post-Status (z.B. 'lww_running')
-        $status_object = get_post_status_object($status); // Holt das Objekt mit Label etc.
-        $status_label = $status_object ? $status_object->label : ucfirst(str_replace('lww_', '', $status)); // Holt das lesbare Label
+        $status = $item->post_status;
+        $status_object = get_post_status_object($status);
+        $status_label = $status_object ? $status_object->label : ucfirst(str_replace('lww_', '', $status));
+        $status_class = 'lww-status-' . str_replace('lww_', '', $status);
 
-        // Wählt eine CSS-Klasse basierend auf dem Status für die Farbgebung
-        $status_class = 'lww-status-' . str_replace('lww_', '', $status); // z.B. 'lww-status-running'
-
-        // Gibt das formatierte Status-Badge zurück
         return sprintf('<span class="lww-status-badge %s">%s</span>', esc_attr($status_class), esc_html($status_label));
     }
 
     /**
-     * Rendert die "Typ"-Spalte basierend auf dem Metafeld '_job_type'.
+     * Rendert die "Typ"-Spalte.
      */
      public function column_job_type($item) {
-         $type = get_post_meta($item->ID, '_job_type', true); // Holt den Job-Typ aus den Metadaten
-         // Gibt eine lesbare Bezeichnung zurück
+         $type = get_post_meta($item->ID, '_job_type', true);
          switch($type) {
              case 'catalog_import': return __('Katalog-Import', 'lego-wawi');
              case 'inventory_import': return __('Inventar-Import', 'lego-wawi');
-             default: return __('Unbekannt', 'lego-wawi');
+             default: return esc_html($type ?: __('Unbekannt', 'lego-wawi'));
          }
      }
 
      /**
-     * Rendert die "Fortschritt"-Spalte, indem die letzte Log-Nachricht angezeigt wird.
-     */
+      * Rendert die "Fortschritt"-Spalte mit Zeilenzahlen und letzter Log-Nachricht. (NEU)
+      */
      public function column_job_progress($item) {
-         $log = get_post_meta($item->ID, '_job_log', true); // Holt das Log-Array
-         if (is_array($log) && !empty($log)) {
-             $last_message = end($log); // Nimmt die letzte Nachricht aus dem Array
-             // Entfernt den Zeitstempel für eine kürzere Anzeige
-             $message_without_timestamp = preg_replace('/^\[.*?\]\s*/', '', $last_message);
-             // Zeige nur einen Teil langer Nachrichten
-             $short_message = mb_strimwidth($message_without_timestamp, 0, 70, '...');
-             return '<span class="lww-progress-log" title="' . esc_attr($message_without_timestamp) . '">' . esc_html($short_message) . '</span>';
+         $log = get_post_meta($item->ID, '_job_log', true);
+         $job_queue = get_post_meta($item->ID, '_job_queue', true);
+         // Stellt sicher, dass task_index ein gültiger Integer ist, Default 0
+         $task_index = max(0, (int)get_post_meta($item->ID, '_current_task_index', true));
+         $status = $item->post_status;
+
+         $output = '';
+         $last_message = (is_array($log) && !empty($log)) ? end($log) : '';
+         // Zeitstempel für die Anzeige entfernen
+         $message_without_timestamp = preg_replace('/^\[.*?\]\s*/', '', $last_message);
+
+         // Statusabhängige Anzeige
+         switch ($status) {
+             case 'lww_pending':
+                 $output = '<em>' . __('Wartet auf Start...', 'lego-wawi') . '</em>';
+                 break;
+
+             case 'lww_running':
+                 if (is_array($job_queue) && isset($job_queue[$task_index])) {
+                     $current_task = $job_queue[$task_index];
+                     $file_key = $current_task['key'] ?? __('Unbekannt', 'lego-wawi');
+                     $rows_processed = isset($current_task['rows_processed']) ? (int)$current_task['rows_processed'] : 0;
+                     // total_rows wird erst am Ende der Task gesetzt
+                     $total_rows = isset($current_task['total_rows']) ? (int)$current_task['total_rows'] : 0;
+                     $total_tasks = count($job_queue);
+
+                     $output = sprintf(
+                         '<strong>%s %d/%d: %s</strong><br>',
+                         __('Aufgabe', 'lego-wawi'),
+                         $task_index + 1, // Index ist 0-basiert
+                         $total_tasks,
+                         esc_html(ucwords(str_replace('_', ' ', $file_key))) // Macht z.B. aus 'inventory_parts' -> 'Inventory Parts'
+                     );
+
+                     // Verarbeitete Zeilen (Datenzeilen, ohne Header)
+                     $processed_data_rows = max(0, $rows_processed - 1);
+
+                     $output .= sprintf(
+                         '<span class="row-count">%d %s</span>',
+                         $processed_data_rows,
+                         __('Zeilen verarbeitet', 'lego-wawi')
+                     );
+
+                     // Gesamtzahl nur anzeigen, wenn die Aufgabe abgeschlossen ist (und total_rows gesetzt wurde)
+                     if (($current_task['status'] ?? '') === 'complete' && $total_rows > 0) {
+                          $output .= sprintf(' / %d Gesamt', $total_rows);
+                     } elseif ($total_rows > 0) {
+                         // Optional: Fortschrittsbalken oder %-Anzeige, wenn total_rows geschätzt werden könnte
+                         // $percentage = round(($processed_data_rows / $total_rows) * 100);
+                         // $output .= sprintf(' (%d%%)', $percentage);
+                     }
+
+                     // Füge die letzte Log-Nachricht hinzu (gekürzt)
+                      if ($message_without_timestamp) {
+                          $short_message = mb_strimwidth($message_without_timestamp, 0, 70, '...');
+                          $output .= '<br><small class="lww-last-log" title="' . esc_attr($message_without_timestamp) . '">' . esc_html($short_message) . '</small>';
+                      }
+
+                 } else {
+                     // Fallback, wenn Queue-Daten fehlen
+                     $output = '<em>' . __('Verarbeite...', 'lego-wawi') . '</em>';
+                     if ($message_without_timestamp) {
+                           $short_message = mb_strimwidth($message_without_timestamp, 0, 70, '...');
+                           $output .= '<br><small class="lww-last-log" title="' . esc_attr($message_without_timestamp) . '">' . esc_html($short_message) . '</small>';
+                     }
+                 }
+                 break;
+
+             case 'lww_complete':
+                  $output = '<span style="color: green;">' . __('Abgeschlossen', 'lego-wawi') . '</span>';
+                  // Zeige die allerletzte Log-Nachricht (oft "Job abgeschlossen")
+                  if ($message_without_timestamp) {
+                      $output .= '<br><small class="lww-last-log">' . esc_html($message_without_timestamp) . '</small>';
+                  }
+                 break;
+
+             case 'lww_failed':
+                  $output = '<span style="color: red;">' . __('Fehlgeschlagen', 'lego-wawi') . '</span>';
+                   // Zeige die letzte Log-Nachricht (oft die Fehlermeldung)
+                  if ($message_without_timestamp) {
+                       $short_message = mb_strimwidth($message_without_timestamp, 0, 100, '...'); // Etwas länger bei Fehlern
+                       $output .= '<br><small class="lww-last-log" title="' . esc_attr($message_without_timestamp) . '">' . esc_html($short_message) . '</small>';
+                  }
+                 break;
+
+             case 'trash':
+                 $output = '<em>' . __('Papierkorb', 'lego-wawi') . '</em>';
+                 break;
+
+             default:
+                 $output = '--- (' . esc_html($status) . ')'; // Unbekannten Status anzeigen
+                 break;
          }
-         return '---'; // Wenn kein Log vorhanden ist
+
+         return $output;
      }
 
     /**
-     * Definiert Bulk-Aktionen (z.B. "Löschen").
+     * Definiert Bulk-Aktionen.
      */
     public function get_bulk_actions() {
         $actions = [
             'bulk-trash' => __('In den Papierkorb', 'lego-wawi')
         ];
-        // Wenn wir uns im Papierkorb-Filter befinden, andere Aktionen anbieten
-        if (isset($_GET['post_status']) && $_GET['post_status'] === 'trash') {
+        // Andere Aktionen im Papierkorb-View
+        if (isset($_REQUEST['post_status']) && $_REQUEST['post_status'] === 'trash') {
              $actions = [
                 'bulk-untrash' => __('Wiederherstellen', 'lego-wawi'),
                 'bulk-delete-permanently' => __('Endgültig löschen', 'lego-wawi')
@@ -231,57 +340,51 @@ class LWW_Jobs_List_Table extends WP_List_Table {
 
     /**
      * Verarbeitet Bulk-Aktionen.
-     * Wird automatisch von WP_List_Table aufgerufen.
      */
     public function process_bulk_action() {
-        // Holt die aktuelle Aktion (z.B. 'bulk-trash')
         $action = $this->current_action();
-        // Holt die IDs der ausgewählten Jobs
-        $job_ids = isset($_REQUEST['job']) ? wp_parse_id_list($_REQUEST['job']) : [];
+        // Stelle sicher, dass IDs als Array übergeben werden
+        $job_ids = isset($_REQUEST['job']) ? (array) $_REQUEST['job'] : [];
+        $job_ids = array_map('absint', $job_ids); // Nur positive IDs zulassen
+        $job_ids = array_filter($job_ids); // Leere Einträge entfernen
 
-        // Wenn keine IDs oder keine Aktion, abbrechen
-        if (empty($job_ids) || !$action) return;
+        if (empty($job_ids) || !$action || strpos($action, 'bulk-') !== 0) {
+            return;
+        }
 
-        // Sicherheitsprüfung (Nonce)
-        // Die Nonce wird normalerweise im Formular von WP_List_Table hinzugefügt
-        // Wir sollten sie hier prüfen, um CSRF-Angriffe zu verhindern.
+        // Korrekte Nonce-Aktion für Bulk Actions ist 'bulk-{$plural}'
         $nonce_action = 'bulk-' . $this->_args['plural'];
-        if (!check_admin_referer($nonce_action)) { // Prüft die Nonce
+        if (!check_admin_referer($nonce_action)) {
              wp_die(__('Sicherheitsüberprüfung fehlgeschlagen. Bitte versuche es erneut.', 'lego-wawi'));
         }
 
         $processed_count = 0;
-        // Schleife durch die ausgewählten Job-IDs
+        $redirect_needed = false; // Flag, um Redirect nur bei Erfolg auszulösen
+
         foreach ($job_ids as $job_id) {
-            // Sicherstellen, dass es eine gültige ID ist
-            if ($job_id <= 0) continue;
-
-            // Prüfen, ob der Benutzer die Berechtigung hat, diesen Post zu bearbeiten/löschen
-            if (!current_user_can('delete_post', $job_id)) continue;
-
-            // Führe die entsprechende Aktion aus
+            // Berechtigungsprüfung für jeden einzelnen Post
             switch ($action) {
                 case 'bulk-trash':
-                    if (wp_trash_post($job_id)) { // Verschiebt den Post in den Papierkorb
+                    if (current_user_can('delete_post', $job_id) && wp_trash_post($job_id)) {
                         $processed_count++;
                     }
                     break;
                 case 'bulk-untrash':
-                     if (wp_untrash_post($job_id)) { // Stellt den Post aus dem Papierkorb wieder her
-                         // Optional: Status nach Wiederherstellung explizit setzen?
-                         // wp_update_post(['ID' => $job_id, 'post_status' => 'lww_pending']);
+                     // Man braucht 'delete_post' Rechte, um aus dem Papierkorb wiederherzustellen
+                     if (current_user_can('delete_post', $job_id) && wp_untrash_post($job_id)) {
                          $processed_count++;
                      }
                      break;
                  case 'bulk-delete-permanently':
-                     if (wp_delete_post($job_id, true)) { // Löscht den Post endgültig
+                      // Striktere Prüfung: 'delete_post' UND Post muss im Papierkorb sein
+                     if (current_user_can('delete_post', $job_id) && get_post_status($job_id) === 'trash' && wp_delete_post($job_id, true)) {
                          $processed_count++;
                      }
                      break;
             }
         }
 
-        // Erfolgs-/Fehlermeldung anzeigen (optional)
+        // Nachricht anzeigen und Weiterleitung
         if ($processed_count > 0) {
             $message = '';
              switch ($action) {
@@ -292,102 +395,116 @@ class LWW_Jobs_List_Table extends WP_List_Table {
              if ($message) {
                  add_settings_error('lww_messages', 'bulk_action_success', $message, 'updated');
                  set_transient('settings_errors', get_settings_errors(), 30);
+                 $redirect_needed = true; // Nur weiterleiten, wenn etwas passiert ist
              }
+        } else {
+             // Optional: Fehlermeldung, wenn nichts verarbeitet wurde
+             add_settings_error('lww_messages', 'bulk_action_failed', __('Keine Jobs für die ausgewählte Aktion verarbeitet (evtl. fehlende Berechtigungen?).', 'lego-wawi'), 'error');
+             set_transient('settings_errors', get_settings_errors(), 30);
+             $redirect_needed = true; // Auch hier weiterleiten, um die Meldung anzuzeigen
         }
 
-        // Redirect nach Aktion, um erneutes Senden beim Neuladen zu verhindern
-        // Baue die URL zusammen, um Filter etc. beizubehalten
-        $redirect_url = remove_query_arg(['action', 'action2', 'job', '_wpnonce', '_wp_http_referer'], wp_get_referer());
-        wp_safe_redirect($redirect_url);
-        exit;
+        // Redirect nach der Aktion, um Resubmit zu verhindern
+        if ($redirect_needed) {
+            // Baue die URL zusammen, um Filter etc. beizubehalten
+            // wp_get_referer() ist nicht immer zuverlässig, besser die aktuelle URL nehmen
+            $current_url = add_query_arg();
+            // Entferne Aktionsparameter
+            $redirect_url = remove_query_arg(['action', 'action2', 'job', '_wpnonce', '_wp_http_referer'], $current_url);
+            wp_safe_redirect($redirect_url);
+            exit;
+        }
     }
 
 
     /**
-     * Fügt Filter-Links über der Tabelle hinzu (z.B. "Alle", "Wartend", "Papierkorb").
+     * Fügt Filter-Links über der Tabelle hinzu (Alle, Wartend, Laufend, ...).
      */
     protected function get_views() {
         $status_links = [];
-        $num_posts = wp_count_posts('lww_job', 'readable'); // Zählt Posts nach Status für den aktuellen Benutzer
-        $total_items = 0; // Gesamtanzahl (ohne Papierkorb) initialisieren
+        // Zählt alle Jobs, unabhängig vom Status, lesbar für den aktuellen Benutzer
+        $num_posts = wp_count_posts('lww_job', 'readable');
+        $total_items = 0; // Gesamt (ohne Papierkorb)
 
         // Basis-URL für die Filter-Links
         $base_url = admin_url('admin.php?page=' . LWW_PLUGIN_SLUG . '&tab=tab_jobs');
 
-        // Alle relevanten Status durchgehen, die wir anzeigen wollen
-        $relevant_statuses = ['lww_pending', 'lww_running', 'lww_complete', 'lww_failed'];
-        foreach ($relevant_statuses as $status_name) {
+        // Alle registrierten LWW-Status durchgehen
+        $lww_statuses = ['lww_pending', 'lww_running', 'lww_complete', 'lww_failed'];
+        foreach ($lww_statuses as $status_name) {
             $status_object = get_post_status_object($status_name);
-            if (!$status_object) continue; // Überspringen, falls Status nicht registriert ist
+            if (!$status_object) continue;
 
             $count = $num_posts->$status_name ?? 0;
-            $total_items += $count; // Zur Gesamtsumme addieren
+            $total_items += $count; // Zur Gesamtsumme (ohne Papierkorb) addieren
 
             $status_url = add_query_arg('post_status', $status_name, $base_url);
-            $current_class = (isset($_GET['post_status']) && $_GET['post_status'] === $status_name) ? 'current' : '';
+            // Prüft den aktuellen Filter im $_REQUEST
+            $current_class = (isset($_REQUEST['post_status']) && $_REQUEST['post_status'] === $status_name) ? 'current' : '';
 
             $status_links[$status_name] = sprintf(
-                '<a href="%s" class="%s">%s <span class="count">(%d)</span></a>',
+                '<a href="%s" %s>%s <span class="count">(%d)</span></a>',
                 esc_url($status_url),
-                $current_class,
-                esc_html($status_object->label), // Lesbares Label verwenden
+                ($current_class ? 'class="current"' : ''), // Füge Klasse nur hinzu, wenn 'current'
+                esc_html($status_object->label),
                 $count
             );
         }
 
         // Link "Alle" (zeigt alle außer Papierkorb)
         $all_url = remove_query_arg('post_status', $base_url);
-        $current_all_class = (!isset($_GET['post_status']) || $_GET['post_status'] === '') ? 'current' : '';
-         // Link "Alle" an den Anfang des Arrays stellen
-        $status_links = array_merge(['all' => sprintf(
-            '<a href="%s" class="%s">%s <span class="count">(%d)</span></a>',
+        // "Alle" ist aktiv, wenn kein post_status gesetzt ist ODER er 'all' ist
+        $current_all_class = (!isset($_REQUEST['post_status']) || $_REQUEST['post_status'] === '' || $_REQUEST['post_status'] === 'all') ? 'current' : '';
+        $status_links = array_merge(['all' => sprintf( // Füge "Alle" am Anfang ein
+            '<a href="%s" %s>%s <span class="count">(%d)</span></a>',
             esc_url($all_url),
-            $current_all_class,
+            ($current_all_class ? 'class="current"' : ''),
             __('Alle', 'lego-wawi'),
             $total_items
         )], $status_links);
 
 
-        // Link "Papierkorb" (falls vorhanden)
+        // Link "Papierkorb" (falls Jobs im Papierkorb sind)
         $trash_count = $num_posts->trash ?? 0;
         if ($trash_count > 0) {
              $trash_url = add_query_arg('post_status', 'trash', $base_url);
-             $current_trash_class = (isset($_GET['post_status']) && $_GET['post_status'] === 'trash') ? 'current' : '';
+             $current_trash_class = (isset($_REQUEST['post_status']) && $_REQUEST['post_status'] === 'trash') ? 'current' : '';
              $status_links['trash'] = sprintf(
-                '<a href="%s" class="%s">%s <span class="count">(%d)</span></a>',
+                '<a href="%s" %s>%s <span class="count">(%d)</span></a>',
                 esc_url($trash_url),
-                $current_trash_class,
+                ($current_trash_class ? 'class="current"' : ''),
                 __('Papierkorb', 'lego-wawi'),
                 $trash_count
              );
         }
 
-        return $status_links; // Gibt das Array der Filter-Links zurück
+        return $status_links;
     }
 
 } // Ende LWW_Jobs_List_Table
 
 
 /**
- * Rendert den Inhalt des "Job-Warteschlange"-Tabs mithilfe der WP_List_Table.
+ * Rendert den Inhalt des "Job-Warteschlange"-Tabs. (NEU mit AJAX-Wrapper & Toggle)
  */
-// NEU:
 function lww_render_tab_jobs() {
     // Erstellt eine Instanz unserer Job-Tabelle
     $job_list_table = new LWW_Jobs_List_Table();
     // Bereitet die Items (Jobs) für die Anzeige vor (DB-Abfrage etc.)
+    // Wichtig: prepare_items() muss hier aufgerufen werden für den initialen Ladevorgang
     $job_list_table->prepare_items();
 
     ?>
     <div class="lww-admin-form lww-card">
-
-        <div style="float: right; margin-top: -10px; padding: 5px; background: #f9f9f9; border: 1px solid #eee; border-radius: 4px;">
+    
+        <div style="float: right; margin-top: -10px; margin-bottom: 10px; padding: 5px 10px; background: #f9f9f9; border: 1px solid #eee; border-radius: 4px;">
             <label>
                 <input type="checkbox" id="lww-job-refresh-toggle" checked>
+                <span class="dashicons dashicons-update" style="vertical-align: middle;"></span>
                 <?php _e('Automatisch aktualisieren', 'lego-wawi'); ?>
             </label>
         </div>
-
+    
         <h2><?php _e('Job-Warteschlange & Verlauf', 'lego-wawi'); ?></h2>
         <p><?php _e('Hier siehst du alle laufenden, wartenden und abgeschlossenen Import-Jobs.', 'lego-wawi'); ?></p>
 
@@ -396,47 +513,52 @@ function lww_render_tab_jobs() {
         <form id="jobs-filter" method="post">
             <input type="hidden" name="page" value="<?php echo esc_attr($_REQUEST['page'] ?? LWW_PLUGIN_SLUG); ?>" />
             <input type="hidden" name="tab" value="tab_jobs" />
-
+            
             <div id="lww-job-list-container">
-                <?php $job_list_table->display(); // Zeigt die eigentliche Tabelle an ?>
+                <?php
+                // Hier wird die Tabelle initial ausgegeben.
+                // AJAX ersetzt später den Inhalt dieses DIVs.
+                $job_list_table->display();
+                ?>
             </div>
-
+            
         </form>
     </div>
     <?php
 }
-// --- Handler für Job-Aktionen (Abbrechen, Löschen, Wiederherstellen) ---
+
+
+// --- Handler für Einzel-Job-Aktionen (Abbrechen, Löschen, Wiederherstellen) ---
 
 /**
  * Verarbeitet die 'admin_post_lww_cancel_job'-Aktion.
- * Setzt den Job-Status auf 'failed' und stoppt ggf. den Cron.
  */
 function lww_cancel_job_handler() {
-    // Prüft Nonce und Berechtigungen
     if (!isset($_GET['job_id']) || !isset($_GET['_wpnonce'])) return;
     $job_id = absint($_GET['job_id']);
-    if (!wp_verify_nonce($_GET['_wpnonce'], 'lww_cancel_job_' . $job_id)) {
-        wp_die('Sicherheitsüberprüfung fehlgeschlagen.');
+    $nonce_action = 'lww_cancel_job_' . $job_id;
+
+    if (!wp_verify_nonce($_GET['_wpnonce'], $nonce_action)) {
+        wp_die('Sicherheitsüberprüfung fehlgeschlagen (Nonce ungültig).');
     }
-    if (!current_user_can('edit_post', $job_id)) { // Besser: edit_post Capability prüfen
-         wp_die('Keine Berechtigung.');
+    if (!current_user_can('edit_post', $job_id)) { // edit_post reicht, um Status zu ändern
+         wp_die('Keine Berechtigung, diesen Job zu bearbeiten.');
     }
 
-    // Job-Status aktualisieren
+    // Job-Status auf 'failed' setzen
     wp_update_post([
         'ID' => $job_id,
-        'post_status' => 'lww_failed' // Setzt Status auf Fehlgeschlagen
+        'post_status' => 'lww_failed'
     ]);
     lww_log_to_job($job_id, __('Job manuell vom Benutzer abgebrochen.', 'lego-wawi'));
 
-    // Cron-Job stoppen, WENN es der aktuell laufende Job ist
-    $current_job_id_option = get_option('lww_current_running_job_id');
-    if($current_job_id_option == $job_id) {
-        // lww_stop_cron_job(); // Nicht den Cron stoppen, nur die Sperre lösen!
-        delete_option('lww_current_running_job_id'); // Entfernt die Job-Sperre
+    // Globale Sperre aufheben, WENN dieser Job sie hatte
+    if(get_option('lww_current_running_job_id') == $job_id) {
+        delete_option('lww_current_running_job_id');
+        lww_log_system_event('Globale Sperre für Job ' . $job_id . ' nach manuellem Abbruch aufgehoben.');
     }
 
-    // Erfolgsmeldung hinzufügen und zurück zur Job-Liste leiten
+    // Erfolgsmeldung und Redirect zur Job-Liste
     add_settings_error('lww_messages', 'job_cancelled', __('Job erfolgreich abgebrochen.', 'lego-wawi'), 'updated');
     set_transient('settings_errors', get_settings_errors(), 30);
     wp_safe_redirect(admin_url('admin.php?page=' . LWW_PLUGIN_SLUG . '&tab=tab_jobs'));
@@ -449,23 +571,28 @@ add_action('admin_post_lww_cancel_job', 'lww_cancel_job_handler');
  * Verarbeitet die 'admin_post_lww_delete_job'-Aktion (verschiebt in Papierkorb).
  */
 function lww_delete_job_handler() {
-    // Prüft Nonce und Berechtigungen
     if (!isset($_GET['job_id']) || !isset($_GET['_wpnonce'])) return;
     $job_id = absint($_GET['job_id']);
-    if (!wp_verify_nonce($_GET['_wpnonce'], 'lww_delete_job_' . $job_id)) {
+    $nonce_action = 'lww_delete_job_' . $job_id;
+
+    if (!wp_verify_nonce($_GET['_wpnonce'], $nonce_action)) {
         wp_die('Sicherheitsüberprüfung fehlgeschlagen.');
     }
-     if (!current_user_can('delete_post', $job_id)) { // delete_post Capability
-         wp_die('Keine Berechtigung.');
+     if (!current_user_can('delete_post', $job_id)) {
+         wp_die('Keine Berechtigung, diesen Job zu löschen.');
     }
 
-    // Job sicher in den Papierkorb verschieben
-    wp_trash_post($job_id);
+    // Sicher in den Papierkorb verschieben
+    if (wp_trash_post($job_id)) {
+        add_settings_error('lww_messages', 'job_trashed', __('Job in den Papierkorb verschoben.', 'lego-wawi'), 'updated');
+    } else {
+         add_settings_error('lww_messages', 'job_trash_failed', __('Fehler beim Verschieben des Jobs in den Papierkorb.', 'lego-wawi'), 'error');
+    }
 
-    // Erfolgsmeldung und Redirect
-    add_settings_error('lww_messages', 'job_trashed', __('Job in den Papierkorb verschoben.', 'lego-wawi'), 'updated');
     set_transient('settings_errors', get_settings_errors(), 30);
-    wp_safe_redirect(admin_url('admin.php?page=' . LWW_PLUGIN_SLUG . '&tab=tab_jobs'));
+    // Redirect zur Referrer-URL oder zur Job-Liste
+    $redirect_url = wp_get_referer() ?: admin_url('admin.php?page=' . LWW_PLUGIN_SLUG . '&tab=tab_jobs');
+    wp_safe_redirect($redirect_url);
     exit;
 }
 add_action('admin_post_lww_delete_job', 'lww_delete_job_handler');
@@ -477,16 +604,24 @@ add_action('admin_post_lww_delete_job', 'lww_delete_job_handler');
 function lww_untrash_job_handler() {
     if (!isset($_GET['job_id']) || !isset($_GET['_wpnonce'])) return;
     $job_id = absint($_GET['job_id']);
-    if (!wp_verify_nonce($_GET['_wpnonce'], 'lww_untrash_job_' . $job_id)) wp_die('Security check failed.');
-    if (!current_user_can('delete_post', $job_id)) wp_die('No permission.'); // Braucht delete, um wiederherzustellen
+    $nonce_action = 'lww_untrash_job_' . $job_id;
 
-    wp_untrash_post($job_id); // Stellt den Post wieder her (Status wird normalerweise auf vorherigen gesetzt)
-    // Optional: Explizit auf 'pending' setzen, falls gewünscht
-    // wp_update_post(['ID' => $job_id, 'post_status' => 'lww_pending']);
+    if (!wp_verify_nonce($_GET['_wpnonce'], $nonce_action)) wp_die('Security check failed.');
+    // Man braucht 'delete_post' Rechte, um wiederherzustellen
+    if (!current_user_can('delete_post', $job_id)) wp_die('No permission.');
 
-    add_settings_error('lww_messages', 'job_untrashed', __('Job wiederhergestellt.', 'lego-wawi'), 'updated');
+    if (wp_untrash_post($job_id)) {
+         add_settings_error('lww_messages', 'job_untrashed', __('Job wiederhergestellt.', 'lego-wawi'), 'updated');
+         // Optional: Status explizit auf 'pending' setzen? Hängt davon ab, was wp_untrash_post macht.
+         // wp_update_post(['ID' => $job_id, 'post_status' => 'lww_pending']);
+    } else {
+          add_settings_error('lww_messages', 'job_untrash_failed', __('Fehler beim Wiederherstellen des Jobs.', 'lego-wawi'), 'error');
+    }
+
     set_transient('settings_errors', get_settings_errors(), 30);
-    wp_safe_redirect(admin_url('admin.php?page=' . LWW_PLUGIN_SLUG . '&tab=tab_jobs'));
+    // Redirect zur Referrer-URL (vermutlich der Papierkorb-Ansicht) oder zur Job-Liste
+    $redirect_url = wp_get_referer() ?: admin_url('admin.php?page=' . LWW_PLUGIN_SLUG . '&tab=tab_jobs');
+    wp_safe_redirect($redirect_url);
     exit;
 }
 add_action('admin_post_lww_untrash_job', 'lww_untrash_job_handler');
@@ -498,53 +633,73 @@ add_action('admin_post_lww_untrash_job', 'lww_untrash_job_handler');
 function lww_delete_permanently_job_handler() {
     if (!isset($_GET['job_id']) || !isset($_GET['_wpnonce'])) return;
     $job_id = absint($_GET['job_id']);
-    if (!wp_verify_nonce($_GET['_wpnonce'], 'lww_delete_permanently_job_' . $job_id)) wp_die('Security check failed.');
+    $nonce_action = 'lww_delete_permanently_job_' . $job_id;
+
+    if (!wp_verify_nonce($_GET['_wpnonce'], $nonce_action)) wp_die('Security check failed.');
     if (!current_user_can('delete_post', $job_id)) wp_die('No permission.');
 
-    wp_delete_post($job_id, true); // Endgültig aus der DB löschen
+    // Nur aus dem Papierkorb endgültig löschen
+    if (get_post_status($job_id) !== 'trash') {
+        wp_die('Job befindet sich nicht im Papierkorb.');
+    }
 
-    add_settings_error('lww_messages', 'job_deleted', __('Job endgültig gelöscht.', 'lego-wawi'), 'updated');
+    if (wp_delete_post($job_id, true)) { // true = Force delete
+        add_settings_error('lww_messages', 'job_deleted', __('Job endgültig gelöscht.', 'lego-wawi'), 'updated');
+    } else {
+         add_settings_error('lww_messages', 'job_delete_failed', __('Fehler beim endgültigen Löschen des Jobs.', 'lego-wawi'), 'error');
+    }
+
     set_transient('settings_errors', get_settings_errors(), 30);
-    // Zurück zum Papierkorb-View, da der Job jetzt weg ist
-    wp_safe_redirect(admin_url('admin.php?page=' . LWW_PLUGIN_SLUG . '&tab=tab_jobs&post_status=trash'));
+    // Zurück zum Papierkorb-View oder zur Job-Liste
+    $redirect_url = wp_get_referer() ?: admin_url('admin.php?page=' . LWW_PLUGIN_SLUG . '&tab=tab_jobs&post_status=trash');
+    wp_safe_redirect($redirect_url);
     exit;
 }
 add_action('admin_post_lww_delete_permanently_job', 'lww_delete_permanently_job_handler');
 
- /**
+
+/**
  * =========================================================================
- * AJAX HANDLER FÜR JOB-LISTE
+ * AJAX HANDLER FÜR JOB-LISTE (NEU)
  * =========================================================================
  */
-
+ 
 /**
  * Antwortet auf die AJAX-Anfrage von lww-admin-jobs.js.
  * Erstellt die WP_List_Table und sendet nur das HTML der Tabelle zurück.
  */
 function lww_ajax_get_job_list_table() {
-    // 1. Sicherheit prüfen
-    check_ajax_referer('lww_job_list_nonce');
-
+    // 1. Sicherheit prüfen: Nonce verifizieren
+    // Der Nonce-Name muss mit dem im wp_localize_script übereinstimmen
+    if (!check_ajax_referer('lww_job_list_nonce', false, false)) { // false = keine Ausgabe bei Fehler
+        wp_send_json_error(['message' => __('Sicherheitsüberprüfung fehlgeschlagen (Nonce ungültig).', 'lego-wawi')], 403); // 403 Forbidden
+        wp_die(); // Wichtig: Beendet die Ausführung
+    }
+    
     // 2. Berechtigungen prüfen
     if (!current_user_can('manage_options')) {
-        wp_send_json_error(['message' => __('Keine Berechtigung.', 'lego-wawi')]);
+        wp_send_json_error(['message' => __('Keine Berechtigung.', 'lego-wawi')], 403);
+        wp_die();
     }
-
-    // 3. WP_List_Table neu erstellen (genau wie in lww_render_tab_jobs)
+    
+    // 3. WP_List_Table neu erstellen
     // WICHTIG: Die List Table liest die $_REQUEST-Parameter (Sortierung, Filter, Seite),
     // die wir im JS mitgeschickt haben.
     $job_list_table = new LWW_Jobs_List_Table();
-    $job_list_table->prepare_items();
-
+    // Bereite die Items vor (holt Daten basierend auf $_REQUEST)
+    $job_list_table->prepare_items(); 
+    
     // 4. HTML der Tabelle per Output Buffering abfangen
     ob_start();
-    $job_list_table->display();
+    // Nur die Tabelle selbst ausgeben, ohne Filter etc.
+    $job_list_table->display(); 
     $table_html = ob_get_clean();
-
-    // 5. HTML als Erfolgs-Antwort zurücksenden
+    
+    // 5. HTML als Erfolgs-Antwort im 'data'-Feld zurücksenden
     wp_send_json_success($table_html);
+    wp_die(); // Wichtig: AJAX-Handler immer mit wp_die() beenden
 }
-// Hook für den AJAX-Aufruf (nur für eingeloggte Admin-Benutzer)
+// Hook für den AJAX-Aufruf (wp_ajax_{action})
 add_action('wp_ajax_lww_get_job_list_table', 'lww_ajax_get_job_list_table');
 
 ?>

@@ -3,7 +3,7 @@
  * Plugin Name:       Bricksberg Warenwirtschaft (WaWi)
  * Plugin URI:        https://bricksberg.eu/
  * Description:       Synchronisiert WooCommerce mit BrickOwl (Master), BrickLink und Rebrickable über CSV-Import.
- * Version:           0.9.8
+ * Version:           0.9.9
  * Author:            Olaf Ziörjen
  * Author URI:        https://bricksberg.eu/
  * License:           GPL v2 or later
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin-Konstanten
-define('LWW_PLUGIN_VERSION', '0.9.8'); // Version erhöht
+define('LWW_PLUGIN_VERSION', '0.9.9'); // Version erhöht
 define('LWW_PLUGIN_SLUG', 'lego_wawi_admin_page');
 define('LWW_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('LWW_PLUGIN_URL', plugin_dir_url(__FILE__));
