@@ -1,0 +1,200 @@
+/**
+ * LEGO Warenwirtschaft (WaWi) Admin Styles (v9.0)
+ */
+
+/* Grundlegendes Layout */
+.lww-wrap {
+    margin-top: 20px;
+}
+
+.lww-wrap h1 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+}
+
+.lww-wrap h1 .dashicons {
+    font-size: 1.5em;
+    height: auto;
+    width: auto;
+}
+
+/* Tab-Navigation */
+.nav-tab-wrapper {
+    margin-bottom: 20px;
+    padding-bottom: 0;
+    border-bottom: 1px solid #c3c4c7;
+}
+
+.nav-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 10px 15px;
+    font-size: 14px;
+    background: #f0f0f1;
+    border: 1px solid #c3c4c7;
+    border-bottom: none;
+    margin-right: 5px;
+    border-radius: 4px 4px 0 0;
+    text-decoration: none;
+    color: #3c434a;
+}
+.nav-tab .dashicons {
+    font-size: 18px;
+    height: auto;
+    width: auto;
+}
+
+.nav-tab-active,
+.nav-tab-active:focus,
+.nav-tab-active:hover {
+    background: #fff;
+    border-color: #c3c4c7;
+    border-bottom-color: #fff; /* Blendet mit dem Inhalt darunter */
+    color: #000;
+    font-weight: 600;
+    box-shadow: none;
+}
+.nav-tab:hover {
+    background: #e0e0e0;
+}
+
+/* Tab-Inhalte */
+.lww-tab-content {
+    background: #fff;
+    border: 1px solid #c3c4c7;
+    border-top: none;
+    padding: 20px;
+    margin-top: -1px; /* Verbindet mit den Tabs */
+    border-radius: 0 0 4px 4px;
+    min-height: 400px;
+}
+.lww-tab-content h2 {
+    margin-top: 0;
+    margin-bottom: 20px;
+    font-size: 1.5em;
+    font-weight: 600;
+}
+.lww-admin-form {
+    /* Kein extra Hintergrund mehr nötig, da der Tab-Inhalt weiß ist */
+    padding: 0;
+}
+.lww-admin-form .form-table {
+    margin-top: 0;
+}
+.lww-form-group-header h3 {
+    margin: 0;
+    padding: 1.5em 0 0.5em 0;
+    border-bottom: 1px solid #ddd;
+}
+.form-table tr:first-child .lww-form-group-header h3 {
+    padding-top: 0.5em;
+}
+.form-table th {
+    width: 200px; /* Einheitliche Breite für Labels */
+}
+
+/* Dashboard Kacheln */
+.lww-dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+}
+.lww-stat-card {
+    background: #f9f9f9;
+    border: 1px solid #ddd;
+    border-left: 5px solid #0073aa; /* Standard Blau */
+    padding: 20px;
+    border-radius: 4px;
+    box-shadow: 0 1px 1px rgba(0,0,0,.04);
+}
+.lww-stat-card h3 {
+    margin: 0 0 10px 0;
+    font-size: 1.1em; /* Etwas kleiner */
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    color: #3c434a;
+}
+.lww-stat-card .dashicons {
+    margin-right: 8px;
+    color: #0073aa; /* Gleiche Farbe wie Border */
+}
+.lww-stat-card .stat-number {
+    font-size: 2.2em; /* Etwas kleiner */
+    font-weight: 600;
+    color: #222;
+    line-height: 1.2;
+}
+/* Farben für Job-Status */
+.lww-stat-card.jobs-running { border-left-color: #ffb900; }
+.lww-stat-card.jobs-running .dashicons { color: #ffb900; }
+.lww-stat-card.jobs-failed { border-left-color: #dc3232; }
+.lww-stat-card.jobs-failed .dashicons { color: #dc3232; }
+/* Farben für Stammdaten-Status */
+.lww-stat-card.status-ok { border-left-color: #46b450; }
+.lww-stat-card.status-ok .dashicons { color: #46b450; }
+.lww-stat-card.status-missing { border-left-color: #ffb900; }
+.lww-stat-card.status-missing .dashicons { color: #ffb900; }
+.lww-stat-card .status-text {
+    font-size: 0.9em;
+    color: #666;
+    margin-top: 5px;
+}
+
+/* Job-Liste Status Badges */
+.lww-status-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    border-radius: 3px;
+    color: #fff;
+    white-space: nowrap;
+}
+.lww-status-pending { background-color: #0073aa; } /* Blau */
+.lww-status-running { background-color: #ffb900; color: #333; } /* Gelb */
+.lww-status-complete { background-color: #46b450; } /* Grün */
+.lww-status-failed { background-color: #dc3232; } /* Rot */
+.lww-status-trash { background-color: #aaa; } /* Grau */
+
+/* Farbvorschau in Admin-Spalten */
+.lww-color-preview {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border-radius: 3px;
+    border: 1px solid #ccc;
+    margin-right: 5px;
+    vertical-align: middle;
+}
+.lww-color-preview.transparent {
+    background-image: linear-gradient(45deg, #eee 25%, transparent 25%), linear-gradient(-45deg, #eee 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #eee 75%), linear-gradient(-45deg, transparent 75%, #eee 75%);
+    background-size: 10px 10px;
+    background-position: 0 0, 0 5px, 5px -5px, -5px 0px;
+}
+.lww-color-preview-inner { /* Nötig für transparente Farben */
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: 2px; /* Innerer Radius */
+}
+
+/* Inventar UI Platzhalter */
+.lww-inventory-placeholder {
+    padding: 20px;
+    text-align: center;
+    border: 2px dashed #ccc;
+    border-radius: 4px;
+    background: #f9f9f9;
+    color: #666;
+}
+
+/* Allgemeine Helfer */
+.lww-text-center { text-align: center; }
+.lww-mt-20 { margin-top: 20px; }
+.lww-mb-20 { margin-bottom: 20px; }
+.lww-p-20 { padding: 20px; }
