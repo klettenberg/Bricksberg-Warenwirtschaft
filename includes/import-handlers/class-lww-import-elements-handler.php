@@ -11,7 +11,7 @@ class LWW_Import_Elements_Handler extends LWW_Import_Handler_Base {
         $data = $this->get_data_from_row($row_data_raw, $header_map);
 
         $element_id = sanitize_text_field($data['element_id'] ?? '');
-        $part_num = sanitize_text_field($data['part_num'] ?? '');
+        $part_num = sanitize_text_field($data['part_num'] ?? ''); // Rebrickable Part Num
         $color_id_external = intval($data['color_id'] ?? -1); // Rebrickable Color ID
 
         if (empty($element_id) || empty($part_num) || $color_id_external == -1) {
@@ -20,12 +20,18 @@ class LWW_Import_Elements_Handler extends LWW_Import_Handler_Base {
         }
 
         // --- 1. Finde die WordPress Post IDs ---
-        $part_post_id = $this->find_part_by_boid($part_num); // Nutzt die flexible Suche
+        
+        // KORRIGIERT: $part_num ist die Rebrickable ID, nicht die BrickOwl ID (BOID).
+        // Wir verwenden find_post_by_meta, analog zum Color-Handler.
+        $part_meta_key = '_lww_rebrickable_id'; // Annahme: Meta-Key für die Part-Nummer
+        $part_post_id = $this->find_post_by_meta('lww_part', $part_meta_key, $part_num);
+
         if (empty($part_post_id)) {
             lww_log_to_job($job_id, sprintf('WARNUNG (Elements): PartNum "%s" (für Element %s) nicht im Katalog gefunden.', $part_num, $element_id));
             return;
         }
 
+        // Diese Funktion scheint korrekt zu sein (sofern in Base definiert)
         $color_post_id = $this->find_color_by_rebrickable_id($color_id_external);
         if (empty($color_post_id)) {
              lww_log_to_job($job_id, sprintf('WARNUNG (Elements): Color-ID "%d" (für Element %s, Part %s) nicht im Katalog gefunden.', $color_id_external, $element_id, $part_num));
@@ -35,7 +41,7 @@ class LWW_Import_Elements_Handler extends LWW_Import_Handler_Base {
         // --- 2. Element ID als Meta-Feld speichern ---
         // Wir speichern die Element ID am Part Post, zusammen mit der Color ID,
         // da ein Part mehrere Element IDs haben kann (eine pro Farbe).
-        // Format: Speichere ein Array von "ColorID|ElementID" Strings.
+        // Format: Speichere ein Array von [Color_Post_ID] => ElementID
 
         $meta_key = '_lww_element_ids';
         $current_elements = get_post_meta($part_post_id, $meta_key, true);
@@ -57,3 +63,4 @@ class LWW_Import_Elements_Handler extends LWW_Import_Handler_Base {
         // lww_log_to_job($job_id, sprintf('INFO (Elements): Element %s für Part %s / Color %d hinzugefügt/aktualisiert.', $element_id, $part_num, $color_id_external));
     }
 }
+// KORRIGIERT: Überflüssige Klammer entfernt

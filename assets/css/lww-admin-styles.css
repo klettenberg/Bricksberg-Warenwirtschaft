@@ -1,5 +1,5 @@
 /**
- * LEGO Warenwirtschaft (WaWi) Admin Styles (v9.0)
+ * LEGO Warenwirtschaft (WaWi) Admin Styles (v10.0 - Korrigiert & Ergänzt)
  */
 
 /* Grundlegendes Layout */
@@ -78,7 +78,6 @@
     font-weight: 600;
 }
 .lww-admin-form {
-    /* Kein extra Hintergrund mehr nötig, da der Tab-Inhalt weiß ist */
     padding: 0;
 }
 .lww-admin-form .form-table {
@@ -92,8 +91,17 @@
 .form-table tr:first-child .lww-form-group-header h3 {
     padding-top: 0.5em;
 }
-.form-table th {
+
+/* Import-Formulare */
+.lww-import-table th {
     width: 200px; /* Einheitliche Breite für Labels */
+}
+.lww-file-input {
+    width: 100%;
+    max-width: 450px;
+}
+.lww-submit-button {
+    margin-top: 15px;
 }
 
 /* Dashboard Kacheln */
@@ -112,7 +120,7 @@
 }
 .lww-stat-card h3 {
     margin: 0 0 10px 0;
-    font-size: 1.1em; /* Etwas kleiner */
+    font-size: 1.1em;
     font-weight: 600;
     display: flex;
     align-items: center;
@@ -123,7 +131,7 @@
     color: #0073aa; /* Gleiche Farbe wie Border */
 }
 .lww-stat-card .stat-number {
-    font-size: 2.2em; /* Etwas kleiner */
+    font-size: 2.2em;
     font-weight: 600;
     color: #222;
     line-height: 1.2;
@@ -131,13 +139,19 @@
 /* Farben für Job-Status */
 .lww-stat-card.jobs-running { border-left-color: #ffb900; }
 .lww-stat-card.jobs-running .dashicons { color: #ffb900; }
+.lww-stat-card.jobs-pending { border-left-color: #0073aa; } /* NEU */
+.lww-stat-card.jobs-pending .dashicons { color: #0073aa; }
+.lww-stat-card.jobs-complete { border-left-color: #46b450; } /* NEU */
+.lww-stat-card.jobs-complete .dashicons { color: #46b450; }
 .lww-stat-card.jobs-failed { border-left-color: #dc3232; }
 .lww-stat-card.jobs-failed .dashicons { color: #dc3232; }
-/* Farben für Stammdaten-Status */
-.lww-stat-card.status-ok { border-left-color: #46b450; }
-.lww-stat-card.status-ok .dashicons { color: #46b450; }
-.lww-stat-card.status-missing { border-left-color: #ffb900; }
-.lww-stat-card.status-missing .dashicons { color: #ffb900; }
+
+/* Farben für Stammdaten-Status (KORRIGIERT) */
+.lww-stat-card.core-data-ok { border-left-color: #46b450; }
+.lww-stat-card.core-data-ok .dashicons { color: #46b450; }
+.lww-stat-card.core-data-missing { border-left-color: #ffb900; }
+.lww-stat-card.core-data-missing .dashicons { color: #ffb900; }
+
 .lww-stat-card .status-text {
     font-size: 0.9em;
     color: #666;
@@ -161,6 +175,21 @@
 .lww-status-failed { background-color: #dc3232; } /* Rot */
 .lww-status-trash { background-color: #aaa; } /* Grau */
 
+/* Job-Liste Fortschrittsspalte (NEU) */
+.lww-last-log {
+    color: #50575e;
+    font-style: italic;
+    display: block;
+    margin-top: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 250px; /* Verhindert Tabellen-Überlauf */
+}
+.row-count {
+    font-weight: 600;
+}
+
 /* Farbvorschau in Admin-Spalten */
 .lww-color-preview {
     display: inline-block;
@@ -183,14 +212,50 @@
     border-radius: 2px; /* Innerer Radius */
 }
 
-/* Inventar UI Platzhalter */
-.lww-inventory-placeholder {
+/* Platzhalter & Hinweise (NEU) */
+.lww-notice {
+    padding: 10px 15px;
+    margin-bottom: 15px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-left-width: 4px;
+    border-left-style: solid;
+}
+.lww-notice .dashicons {
+    font-size: 24px;
+    height: auto;
+    width: auto;
+}
+.lww-notice.notice-error {
+    border-left-color: #dc3232;
+}
+.lww-notice.notice-success {
+    border-left-color: #46b450;
+}
+
+.lww-placeholder {
     padding: 20px;
-    text-align: center;
+    text-align: left;
     border: 2px dashed #ccc;
     border-radius: 4px;
     background: #f9f9f9;
     color: #666;
+}
+.lww-placeholder ul {
+    list-style-type: none;
+    margin-top: 15px;
+    margin-left: 0;
+    padding-left: 0;
+}
+.lww-placeholder ul li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.lww-placeholder .dashicons {
+    color: #0073aa;
 }
 
 /* Allgemeine Helfer */
@@ -198,3 +263,37 @@
 .lww-mt-20 { margin-top: 20px; }
 .lww-mb-20 { margin-bottom: 20px; }
 .lww-p-20 { padding: 20px; }
+
+
+/*
+ * NEU: Stile für Inventar-UI AJAX-Buttons (v10.0)
+ */
+
+.lww-ajax-create-wc-product {
+    transition: all 0.3s ease;
+    white-space: nowrap;
+}
+
+.lww-ajax-create-wc-product .spinner {
+    visibility: visible;
+    margin-top: 0;
+}
+
+.lww-ajax-create-wc-product.success {
+    background-color: #46b450 !important; /* Grün */
+    border-color: #46b450 !important;
+    color: #fff !important;
+}
+
+.lww-ajax-create-wc-product.error {
+    background-color: #dc3232 !important; /* Rot */
+    border-color: #dc3232 !important;
+    color: #fff !important;
+}
+
+.lww-ajax-create-wc-product .dashicons {
+    margin-right: 4px;
+    font-size: 16px;
+    vertical-align: middle;
+    line-height: 1;
+}

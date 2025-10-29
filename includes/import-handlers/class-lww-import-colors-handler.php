@@ -9,15 +9,21 @@ class LWW_Import_Colors_Handler extends LWW_Import_Handler_Base {
     public function process_row($job_id, $row_data_raw, $header_map) {
         $data = $this->get_data_from_row($row_data_raw, $header_map);
     
-        $rebrickable_id = intval($data['id'] ?? 0);
+        // Rohdaten holen und prüfen
+        $raw_id = $data['id'] ?? null;
         $color_name = sanitize_text_field($data['name'] ?? '');
-        $rgb_hex = sanitize_hex_color_no_hash($data['rgb'] ?? '');
-        $is_trans = ($data['is_trans'] ?? 'f') === 't';
 
-        if (empty($rebrickable_id) && $rebrickable_id !== 0 || empty($color_name)) {
-            lww_log_to_job($job_id, sprintf('WARNUNG (Farbe): Zeile übersprungen. ID ("%s") oder Name ("%s") fehlt.', $rebrickable_id, $color_name));
+        // Prüfen, ob die ID überhaupt gesetzt (nicht null, nicht leer) ODER der Name leer ist.
+        // '0' ist eine gültige ID (z.B. für "Black").
+        if ($raw_id === null || $raw_id === '' || empty($color_name)) {
+            lww_log_to_job($job_id, sprintf('WARNUNG (Farbe): Zeile übersprungen. ID ("%s") oder Name ("%s") fehlt.', $raw_id ?? 'NULL', $color_name));
             return;
         }
+        
+        // Daten sicher umwandeln
+        $rebrickable_id = intval($raw_id);
+        $rgb_hex = sanitize_hex_color_no_hash($data['rgb'] ?? '');
+        $is_trans = ($data['is_trans'] ?? 'f') === 't';
 
         $meta_key = '_lww_rebrickable_id';
         $post_id = $this->find_post_by_meta('lww_color', $meta_key, $rebrickable_id);
