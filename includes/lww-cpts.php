@@ -1,6 +1,6 @@
 <?php
 /**
- * Modul: Custom Post Types (v9.0)
+ * Modul: Custom Post Types (v13.0)
  * Registriert CPTs: Teil, Set, Minifig, Farbe, Job, Inventar-Item.
  */
 
@@ -20,7 +20,7 @@ function lww_register_cpts() {
         'hierarchical' => false,
         'public' => false, // Nicht öffentlich sichtbar
         'show_ui' => true,
-        'show_in_menu' => LWW_PLUGIN_SLUG, // Hängt sich unter das "LEGO WaWi" Menü
+        'show_in_menu' => LWW_PLUGIN_SLUG, // Unter dem Hauptmenü anzeigen
         'menu_position' => 5,
         'show_in_admin_bar' => false,
         'show_in_nav_menus' => false,
@@ -37,7 +37,7 @@ function lww_register_cpts() {
     $part_args['label'] = __('LEGO Teil', 'lego-wawi');
     $part_args['description'] = __('Katalog für LEGO-Teile (Formen/Molds)', 'lego-wawi');
     $part_args['labels'] = lww_get_cpt_labels('Teil', 'Teile');
-    $part_args['menu_icon'] = 'dashicons-admin-generic';
+    $part_args['menu_icon'] = 'dashicons-block-default';
     register_post_type('lww_part', $part_args);
 
     // CPT: lww_set (LEGO Set)
@@ -75,16 +75,27 @@ function lww_register_cpts() {
     $job_args['show_in_menu'] = false; // Wird im UI-Tab angezeigt
     register_post_type('lww_job', $job_args);
 
-    // CPT: lww_inventory_item (BrickOwl Inventar-Item) - NEU in v9.0
+    // CPT: lww_inventory_item (BrickOwl Inventar-Item)
     $inventory_args = $base_args;
     $inventory_args['label'] = __('BrickOwl Inventar Item', 'lego-wawi');
     $inventory_args['description'] = __('Ein einzelner Posten aus dem BrickOwl Inventar', 'lego-wawi');
     $inventory_args['labels'] = lww_get_cpt_labels('Inventar Item', 'Inventar Items');
     $inventory_args['menu_icon'] = 'dashicons-archive'; // Neues Icon
     $inventory_args['supports'] = ['title', 'custom-fields']; // Titel wird z.B. "3001 Red Used"
-    $inventory_args['show_in_menu'] = LWW_PLUGIN_SLUG; // Als Untermenüpunkt
-    $inventory_args['menu_position'] = 10; // Position im Untermenü
+    $inventory_args['show_in_menu'] = false; // Als Untermenüpunkt
     register_post_type('lww_inventory_item', $inventory_args);
+
+    // CPT: lww_api_log (API-Nutzungs-Log)
+    $api_log_args = $base_args;
+    $api_log_args['label'] = __('API-Log', 'lego-wawi');
+    $api_log_args['description'] = __('Protokoll der ausgehenden API-Aufrufe.', 'lego-wawi');
+    $api_log_args['labels'] = lww_get_cpt_labels('API-Log-Eintrag', 'API-Log-Einträge');
+    $api_log_args['menu_icon'] = 'dashicons-cloud-upload';
+    $api_log_args['supports'] = ['title', 'custom-fields', 'editor']; // Editor für Details
+    $api_log_args['capabilities'] = ['create_posts' => 'do_not_allow']; // Verhindert manuelle Erstellung
+    $api_log_args['map_meta_cap'] = true;
+    $api_log_args['show_in_menu'] = false; // Wird über eigene UI-Seite angezeigt
+    register_post_type('lww_api_log', $api_log_args);
 }
 add_action('init', 'lww_register_cpts', 0);
 

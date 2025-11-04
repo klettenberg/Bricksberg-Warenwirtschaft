@@ -1,6 +1,6 @@
 <?php
 /**
- * Modul: Taxonomien (v9.0)
+ * Modul: Taxonomien (v12.0)
  * Registriert Taxonomien: Themen, Teile-Kategorien.
  */
 
@@ -26,7 +26,7 @@ function lww_register_taxonomies() {
         'show_in_nav_menus' => false,
         'show_tagcloud'     => false,
         'rewrite'           => false, // Keine eigene URL
-        'show_in_menu'      => LWW_PLUGIN_SLUG, // Als Untermenüpunkt unter "LEGO WaWi"
+        'show_in_menu'      => false, // Wird über eigene UI-Seiten verwaltet
         'query_var'         => false, // Performance: Nicht für Frontend-Queries
     ];
     register_taxonomy('lww_theme', ['lww_set'], $theme_args); // Wird mit SETS verknüpft
@@ -40,10 +40,24 @@ function lww_register_taxonomies() {
         'show_ui'           => true,
         'show_admin_column' => true, // Spalte in der Teile-Übersicht anzeigen
         'rewrite'           => false,
-        'show_in_menu'      => LWW_PLUGIN_SLUG, // Als Untermenüpunkt unter "LEGO WaWi"
+        'show_in_menu'      => false, // Wird über eigene UI-Seiten verwaltet
         'query_var'         => false,
     ];
     register_taxonomy('lww_part_category', ['lww_part'], $cat_args); // Wird mit TEILEN verknüpft
+
+    // TAX: lww_inventory_location (Lagerort für Inventar-Items)
+    $loc_labels = lww_get_tax_labels('Lagerort', 'Lagerorte');
+    $loc_args = [
+        'labels'            => $loc_labels,
+        'hierarchical'      => false, // Wie Tags, nicht hierarchisch
+        'public'            => false,
+        'show_ui'           => true,
+        'show_admin_column' => true, // Wichtig für die Admin-Spalte
+        'rewrite'           => false,
+        'show_in_menu'      => false, // Wird über eigene UI-Seiten verwaltet
+        'query_var'         => true, // Erlaubt das Filtern nach diesem Query-Var
+    ];
+    register_taxonomy('lww_inventory_location', ['lww_inventory_item'], $loc_args); // Wird mit INVENTAR verknüpft
 }
 // Läuft nach den CPTs (standardmäßig Prio 10), aber vor dem Rest
 add_action('init', 'lww_register_taxonomies', 1); // Prio 1 sicherstellen

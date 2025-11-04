@@ -1,10 +1,12 @@
 <?php
 /**
- * Import-Handler für BrickOwl 'inventory.csv'
+ * Import-Handler für BrickOwl 'inventory-backup.csv'
+ * Diese Klasse ist funktional identisch zum normalen Inventar-Handler,
+ * existiert aber als eigener Typ für Klarheit und zukünftige Anpassungen.
  */
 if (!defined('ABSPATH')) exit;
 
-class LWW_Import_Inventory_Handler extends LWW_Import_Handler_Base {
+class LWW_Import_Inventory_Backup_Handler extends LWW_Import_Handler_Base {
 
     public function start_job($job_id) {
         self::$post_cache = [];
@@ -12,7 +14,6 @@ class LWW_Import_Inventory_Handler extends LWW_Import_Handler_Base {
 
     public function process_row($job_id, $row_data_raw, $header_map) {
         $data = $this->get_data_from_row($row_data_raw, $header_map);
-        $line_number = ($job_queue = get_post_meta($job_id, '_job_queue', true)) ? ($job_queue[0]['rows_processed'] ?? 0) + 1 : 0;
 
         $boid = sanitize_text_field($data['boid'] ?? '');
         $color_name = sanitize_text_field($data['color_name'] ?? '');
@@ -22,7 +23,7 @@ class LWW_Import_Inventory_Handler extends LWW_Import_Handler_Base {
         $remarks = sanitize_textarea_field($data['remarks'] ?? '');
 
         if (empty($boid) || empty($color_name)) {
-            lww_log_to_job($job_id, sprintf('WARNUNG (Inventar): Zeile %d übersprungen. BOID ("%s") oder Farbe ("%s") fehlt.', $line_number, $boid, $color_name));
+            lww_log_to_job($job_id, sprintf('WARNUNG (Inventar-Backup): Zeile übersprungen. BOID ("%s") oder Farbe ("%s") fehlt.', $boid, $color_name));
             return;
         }
         
@@ -35,11 +36,11 @@ class LWW_Import_Inventory_Handler extends LWW_Import_Handler_Base {
         $color_post_id = $this->find_color_by_name($color_name);
 
         if (empty($part_post_id)) {
-            lww_log_unresolved_reference($job_id, 'inventory.csv', 'BOID', $boid, $line_number);
+            lww_log_to_job($job_id, sprintf('WARNUNG (Inventar-Backup): Item "%s" (%s) übersprungen. Katalog-Teil (Part) mit BOID "%s" nicht gefunden.', $data['name'] ?? 'Unbekannt', $boid, $boid));
             return; 
         }
         if (empty($color_post_id)) {
-            lww_log_unresolved_reference($job_id, 'inventory.csv', 'Color Name', $color_name, $line_number);
+            lww_log_to_job($job_id, sprintf('WARNUNG (Inventar-Backup): Item "%s" (%s) übersprungen. Katalog-Farbe (Color) mit Namen "%s" nicht gefunden.', $data['name'] ?? 'Unbekannt', $boid, $color_name));
             return;
         }
 
@@ -61,11 +62,11 @@ class LWW_Import_Inventory_Handler extends LWW_Import_Handler_Base {
         } else {
             $post_id = wp_insert_post($post_data, true);
             if (is_wp_error($post_id)) {
-                lww_log_to_job($job_id, sprintf('FEHLER (Inventar-Insert): Konnte "%s" nicht erstellen: %s', $post_title, $post_id->get_error_message()));
+                lww_log_to_job($job_id, sprintf('FEHLER (Inventar-Backup-Insert): Konnte "%s" nicht erstellen: %s', $post_title, $post_id->get_error_message()));
                 return;
             }
             // Logging entfernt
-            // lww_log_to_job($job_id, sprintf('INFO (Inventar-Insert): "%s" (ID: %d) NEU erstellt.', $post_title, $post_id));
+            // lww_log_to_job($job_id, sprintf('INFO (Inventar-Backup-Insert): "%s" (ID: %d) NEU erstellt.', $post_title, $post_id));
         }
 
         if ($post_id > 0) {

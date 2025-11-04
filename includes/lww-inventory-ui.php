@@ -1,9 +1,9 @@
 <?php
 /**
- * Modul: Inventar UI & Steuerung (v10.0)
+ * Modul: Inventar UI & Steuerung (v14.0)
  *
  * Rendert die Seite "BrickOwl Inventar verwalten" und zeigt eine
- * WP_List_Table des 'lww_inventory_item' CPTs.
+ * WP_List_Table des 'lww_inventory_item' CPTs mit erweiterten, persistenten Filtern.
  */
 if (!defined('ABSPATH')) exit;
 
@@ -20,8 +20,10 @@ if (!class_exists('WP_List_Table')) {
  */
 class LWW_Inventory_List_Table extends WP_List_Table {
 
+    private $user_filters = [];
+
     /**
-     * Konstruktor. Setzt die Bezeichnungen.
+     * Konstruktor. Setzt die Bezeichnungen und lädt persistente Filter.
      */
     public function __construct() {
         parent::__construct([
@@ -29,6 +31,47 @@ class LWW_Inventory_List_Table extends WP_List_Table {
             'plural'   => __('Inventar Items', 'lego-wawi'), // plural name of the listed records
             'ajax'     => false // AJAX wird (noch) nicht für die Paginierung verwendet
         ]);
+
+        $this->load_and_set_filters();
+    }
+
+    /**
+     * Lädt gespeicherte Filter oder speichert neue aus der URL.
+     */
+    private function load_and_set_filters() {
+        $user_id = get_current_user_id();
+        $meta_key = 'lww_inventory_filters';
+
+        // Filter zurücksetzen, wenn angefordert
+        if (isset($_REQUEST['lww_reset_filters'])) {
+            delete_user_meta($user_id, $meta_key);
+            wp_safe_redirect(remove_query_arg(['lww_reset_filters', '_wpnonce']));
+            exit;
+        }
+
+        $this->user_filters = get_user_meta($user_id, $meta_key, true);
+        if (!is_array($this->user_filters)) {
+            $this->user_filters = [];
+        }
+
+        $possible_filters = ['lww_inventory_location', 'condition_filter', 'wc_status_filter', 'image_status_filter', 'demand_filter'];
+        $filters_changed = false;
+
+        foreach ($possible_filters as $filter_key) {
+            if (isset($_REQUEST[$filter_key])) {
+                $this->user_filters[$filter_key] = sanitize_text_field($_REQUEST[$filter_key]);
+                $filters_changed = true;
+            } elseif (!isset($_REQUEST[$filter_key])) {
+                // Wenn kein Filter in der URL ist, den gespeicherten anwenden
+                if (!empty($this->user_filters[$filter_key])) {
+                    $_REQUEST[$filter_key] = $this->user_filters[$filter_key];
+                }
+            }
+        }
+
+        if ($filters_changed) {
+            update_user_meta($user_id, $meta_key, $this->user_filters);
+        }
     }
 
     /**
@@ -39,12 +82,14 @@ class LWW_Inventory_List_Table extends WP_List_Table {
         $columns = [
             'cb'         => '<input type="checkbox" />',
             'thumbnail'  => __('Bild', 'lego-wawi'),
-            'name'       => __('Name / Teil', 'lego-wawi'),
+            'name'       => __('Inventar-Posten / Teil', 'lego-wawi'), // Angepasster Titel
             'color'      => __('Farbe', 'lego-wawi'),
+            'location'   => __('Lagerort', 'lego-wawi'),
             'condition'  => __('Zustand', 'lego-wawi'),
             'quantity'   => __('Menge', 'lego-wawi'),
             'price'      => __('Preis', 'lego-wawi'),
-            'wc_status'  => __('WooCommerce Status', 'lego-wawi'),
+            'demand'     => __('Nachfrage (KI)', 'lego-wawi'),
+            'marketplaces' => __('Marktplätze', 'lego-wawi'),
             'actions'    => __('Aktionen', 'lego-wawi'),
         ];
         return $columns;
@@ -60,6 +105,7 @@ class LWW_Inventory_List_Table extends WP_List_Table {
             'condition' => ['condition', false],
             'quantity'  => ['quantity', false],
             'price'     => ['price', false],
+            'demand'    => ['demand', false],
         ];
         return $sortable_columns;
     }
@@ -87,7 +133,7 @@ class LWW_Inventory_List_Table extends WP_List_Table {
 
     /**
      * Rendert die Spalte 'name'.
-     * Verlinkt zum 'lww_part' Post, falls verknüpft.
+     * Verlinkt zum 'lww_inventory_item' und zum 'lww_part' Post.
      */
     function column_name($item) {
         $title = $item->post_title;
@@ -95,12 +141,13 @@ class LWW_Inventory_List_Table extends WP_List_Table {
         $boid = get_post_meta($item->ID, '_boid', true);
         $actions = [];
 
-        // Link zum Bearbeiten des Inventar-Items selbst
-        $actions['edit'] = sprintf(
-            '<a href="%s" aria-label="%s">%s</a>',
-            get_edit_post_link($item->ID),
+        // Title with link to edit the inventory item
+        $edit_link = get_edit_post_link($item->ID);
+        $linked_title = sprintf(
+            '<a class="row-title" href="%s" aria-label="%s"><strong>%s</strong></a>',
+            esc_url($edit_link),
             esc_attr(sprintf(__('Bearbeite "%s"', 'lego-wawi'), $title)),
-            __('Bearbeiten', 'lego-wawi')
+            esc_html($title)
         );
 
         // Link zum verknüpften 'lww_part'
@@ -116,26 +163,26 @@ class LWW_Inventory_List_Table extends WP_List_Table {
              $actions['view_part'] = sprintf('<span style="color: #d63638;">%s</span>', __('Kein Katalog-Teil verknüpft', 'lego-wawi'));
         }
 
-        return sprintf('<strong>%s</strong><br><small>(BOID: %s)</small>%s',
-            esc_html($title),
+        return sprintf('%s<br><small>(BOID: %s)</small>%s',
+            $linked_title,
             esc_html($boid),
             $this->row_actions($actions)
         );
     }
 
     /**
-     * Rendert die Spalte 'color' (Farbe) mit Vorschau.
+     * Rendert die Spalte 'color' (Farbe) mit Vorschau und Link.
      */
     function column_color($item) {
         $color_id = get_post_meta($item->ID, '_lww_color_id', true);
         $color_name = get_post_meta($item->ID, '_color_name', true);
 
-        if (!$color_id) {
-            return esc_html($color_name) ?: '---';
+        if (!$color_id && !$color_name) {
+            return '---';
         }
 
-        $rgb = get_post_meta($color_id, 'lww_rgb_hex', true);
-        $is_trans = get_post_meta($color_id, 'lww_is_transparent', true);
+        $rgb = $color_id ? get_post_meta($color_id, '_lww_rgb_hex', true) : null;
+        $is_trans = $color_id ? get_post_meta($color_id, '_lww_is_transparent', true) : false;
         
         $preview_html = '';
         if ($rgb) {
@@ -144,7 +191,7 @@ class LWW_Inventory_List_Table extends WP_List_Table {
                 $class .= ' transparent';
                 $inner_style = 'style="background-color: #' . esc_attr($rgb) . '; opacity: 0.7;"';
             } else {
-                $style = 'style="background-color: #' . esc_attr($rgb) . ';"';
+                $style = 'style="background-color: #' . esc_attr($rgb) . '"';
             }
             $preview_html = sprintf(
                 '<div class="%s" %s title="#%s"><div class="lww-color-preview-inner" %s></div></div>',
@@ -152,7 +199,16 @@ class LWW_Inventory_List_Table extends WP_List_Table {
             );
         }
         
-        return $preview_html . ' ' . esc_html($color_name);
+        $color_title_html = esc_html($color_name);
+        if ($color_id) {
+            $color_title_html = sprintf(
+                '<a href="%s">%s</a>',
+                esc_url(get_edit_post_link($color_id)),
+                $color_title_html
+            );
+        }
+
+        return $preview_html . ' ' . $color_title_html;
     }
     
     /**
@@ -161,7 +217,7 @@ class LWW_Inventory_List_Table extends WP_List_Table {
      */
     function column_thumbnail($item) {
         $part_id = get_post_meta($item->ID, '_lww_part_id', true);
-        $thumb_size = [40, 40];
+        $thumb_size = [80, 80];
         $placeholder_style = 'style="width:' . $thumb_size[0] . 'px; height:' . $thumb_size[1] . 'px; background:#f0f0f1; border:1px solid #ddd; text-align:center; display:inline-block; line-height:' . $thumb_size[1] . 'px;"';
 
         if ($part_id && has_post_thumbnail($part_id)) {
@@ -169,6 +225,13 @@ class LWW_Inventory_List_Table extends WP_List_Table {
         }
         
         return '<span class="dashicons dashicons-format-image" ' . $placeholder_style . ' title="' . __('Kein Bild im Katalog', 'lego-wawi') . '"></span>';
+    }
+
+    /**
+     * Rendert die Spalte 'location' (Lagerort).
+     */
+    function column_location($item) {
+        return get_the_term_list($item->ID, 'lww_inventory_location', '', ', ', '') ?: '---';
     }
 
     /**
@@ -191,27 +254,78 @@ class LWW_Inventory_List_Table extends WP_List_Table {
      */
     function column_price($item) {
         $price = (float) get_post_meta($item->ID, '_price', true);
-        return number_format($price, 2, ',', '.') . ' €';
+        return '<span class="lww-item-price-display">' . number_format($price, 3, ',', '.') . ' €</span>';
     }
 
     /**
-     * Rendert die Spalte 'wc_status'.
-     * Platzhalter-Logik: Prüft, ob ein Meta-Feld '_lww_wc_variation_id' existiert.
+     * Rendert die Spalte 'demand' (Nachfrage).
      */
-    function column_wc_status($item) {
+    function column_demand($item) {
+        $score = get_post_meta($item->ID, '_lww_demand_score', true);
+        if (is_numeric($score)) {
+            $score = (int) $score;
+            $color = '#777'; // Grau (Standard)
+            if ($score >= 75) {
+                $color = '#2a9d8f'; // Grün
+            } elseif ($score >= 40) {
+                $color = '#e9c46a'; // Gelb
+            } else {
+                $color = '#e76f51'; // Rot
+            }
+             printf(
+                '<strong style="color: %s; font-size: 1.1em;" title="%s">%d / 100</strong>',
+                esc_attr($color),
+                esc_attr__('KI-basierter Nachfrage-Score (1-100)', 'lego-wawi'),
+                $score
+            );
+        } else {
+            printf(
+                '<span class="lww-demand-score-placeholder" title="%s">%s</span>',
+                esc_attr__('Noch kein Score berechnet. Nutzen Sie das Analyse-Werkzeug.', 'lego-wawi'),
+                '---'
+            );
+        }
+    }
+
+    /**
+     * Rendert die Spalte 'marketplaces'.
+     * Prüft, ob der Artikel auf verschiedenen Marktplätzen gelistet ist.
+     */
+    function column_marketplaces($item) {
+        $boid = get_post_meta($item->ID, '_boid', true);
         $wc_var_id = get_post_meta($item->ID, '_lww_wc_variation_id', true);
+        $wc_prod_id = get_post_meta($item->ID, '_lww_wc_product_id', true);
+        $ebay_id = get_post_meta($item->ID, '_lww_ebay_listing_id', true);
         
-        if ($wc_var_id) {
-            $wc_link = get_edit_post_link($wc_var_id);
-            return sprintf(
-                '<span class="dashicons dashicons-yes-alt" style="color: #46b450;"></span> <a href="%s" target="_blank">%s (%d)</a>',
+        $badges = [];
+
+        if ($boid) {
+            $badges[] = '<span class="lww-marketplace-badge lww-marketplace-bo" title="' . esc_attr__('Auf BrickOwl gelistet', 'lego-wawi') . '">BO</span>';
+        }
+
+        if ($wc_var_id && $wc_prod_id) {
+            $wc_link = get_edit_post_link($wc_prod_id);
+            $badges[] = sprintf(
+                '<a href="%s" target="_blank" class="lww-marketplace-badge lww-marketplace-wc" title="' . esc_attr__('Als WooCommerce-Produkt synchronisiert (Variation ID: %d)', 'lego-wawi') . '">WC</a>',
                 esc_url($wc_link),
-                __('Synchronisiert', 'lego-wawi'),
                 $wc_var_id
             );
         }
-        
-        return '<span class="dashicons dashicons-minus" style="color: #a0a5aa;"></span> ' . __('Nicht in WooCommerce', 'lego-wawi');
+
+        if ($ebay_id) {
+             $ebay_link = 'https://www.ebay.de/itm/' . $ebay_id;
+             $badges[] = sprintf(
+                '<a href="%s" target="_blank" class="lww-marketplace-badge lww-marketplace-ebay" title="' . esc_attr__('Auf eBay gelistet (Listing ID: %s)', 'lego-wawi') . '">eBay</a>',
+                esc_url($ebay_link),
+                $ebay_id
+            );
+        }
+
+        if (empty($badges)) {
+            return '<span class="dashicons dashicons-minus" style="color: #a0a5aa;"></span> ' . __('Nirgends gelistet', 'lego-wawi');
+        }
+
+        return '<div class="lww-marketplace-badges">' . implode(' ', $badges) . '</div>';
     }
 
     /**
@@ -221,20 +335,34 @@ class LWW_Inventory_List_Table extends WP_List_Table {
     function column_actions($item) {
         $wc_var_id = get_post_meta($item->ID, '_lww_wc_variation_id', true);
         $part_id = get_post_meta($item->ID, '_lww_part_id', true);
+        $boid = get_post_meta($item->ID, '_boid', true);
         
-        // Wenn kein Katalog-Teil verknüpft ist, kann kein WC-Produkt erstellt werden
-        if (!$part_id) {
-            return '<button class="button button-small" disabled>' . __('Katalog-Teil fehlt', 'lego-wawi') . '</button>';
+        $buttons = [];
+
+        // Button für BrickOwl-Preisabruf
+        if ($boid) {
+            $buttons[] = sprintf(
+                '<button class="button button-secondary button-small lww-ajax-get-brickowl-price" data-item-id="%d" data-boid="%s" title="%s"><span class="dashicons dashicons-download"></span></button>',
+                $item->ID,
+                esc_attr($boid),
+                __('Aktuellen Preis von BrickOwl abrufen', 'lego-wawi')
+            );
         }
 
-        $button_text = $wc_var_id ? __('Aktualisieren', 'lego-wawi') : __('Erstellen', 'lego-wawi');
-        
-        return sprintf(
-            '<button class="button button-primary button-small lww-ajax-create-wc-product" data-item-id="%d" data-part-id="%d">%s</button>',
-            $item->ID,
-            $part_id,
-            $button_text
-        );
+        // Button für WooCommerce-Erstellung/-Aktualisierung
+        if ($part_id) {
+            $wc_button_text = $wc_var_id ? __('Aktualisieren', 'lego-wawi') : __('Erstellen', 'lego-wawi');
+            $buttons[] = sprintf(
+                '<button class="button button-primary button-small lww-ajax-create-wc-product" data-item-id="%d" data-part-id="%d">%s</button>',
+                $item->ID,
+                $part_id,
+                $wc_button_text
+            );
+        } else {
+            $buttons[] = '<button class="button button-small" disabled>' . __('Katalog-Teil fehlt', 'lego-wawi') . '</button>';
+        }
+
+        return '<div style="display:flex; gap: 4px;">' . implode(' ', $buttons) . '</div>';
     }
 
     /**
@@ -243,6 +371,90 @@ class LWW_Inventory_List_Table extends WP_List_Table {
     function column_default($item, $column_name) {
         // Zeigt Roh-Meta-Daten für nicht definierte Spalten
         return get_post_meta($item->ID, '_' . $column_name, true);
+    }
+
+    /**
+     * Fügt Filter-Dropdowns über der Tabelle hinzu.
+     */
+    public function extra_tablenav($which) {
+        if ($which == "top") {
+            echo '<div class="alignleft actions">';
+
+            // --- Filter für Lagerort ---
+            $taxonomy = 'lww_inventory_location';
+            $selected_location = !empty($_REQUEST[$taxonomy]) ? sanitize_text_field($_REQUEST[$taxonomy]) : '';
+            $terms = get_terms(['taxonomy' => $taxonomy, 'hide_empty' => false]);
+
+            if (!empty($terms) && !is_wp_error($terms)) {
+                echo '<select name="' . esc_attr($taxonomy) . '" id="filter-by-' . esc_attr($taxonomy) . '">';
+                echo '<option value="">' . __('Alle Lagerorte', 'lego-wawi') . '</option>';
+                foreach ($terms as $term) {
+                    printf(
+                        '<option value="%s"%s>%s (%d)</option>',
+                        esc_attr($term->slug),
+                        selected($selected_location, $term->slug, false),
+                        esc_html($term->name),
+                        esc_html($term->count)
+                    );
+                }
+                echo '</select>';
+            }
+
+            // --- Filter für Zustand ---
+            $selected_condition = !empty($_REQUEST['condition_filter']) ? sanitize_key($_REQUEST['condition_filter']) : '';
+            echo '<select name="condition_filter">';
+            echo '<option value="">' . __('Alle Zustände', 'lego-wawi') . '</option>';
+            echo '<option value="new"' . selected($selected_condition, 'new', false) . '>' . __('Neu', 'lego-wawi') . '</option>';
+            echo '<option value="used"' . selected($selected_condition, 'used', false) . '>' . __('Gebraucht', 'lego-wawi') . '</option>';
+            echo '</select>';
+
+            // --- Filter für WooCommerce-Status ---
+            $selected_wc_status = !empty($_REQUEST['wc_status_filter']) ? sanitize_key($_REQUEST['wc_status_filter']) : '';
+            echo '<select name="wc_status_filter">';
+            echo '<option value="">' . __('Alle WC-Status', 'lego-wawi') . '</option>';
+            echo '<option value="synced"' . selected($selected_wc_status, 'synced', false) . '>' . __('Synchronisiert', 'lego-wawi') . '</option>';
+            echo '<option value="not_synced"' . selected($selected_wc_status, 'not_synced', false) . '>' . __('Nicht synchronisiert', 'lego-wawi') . '</option>';
+            echo '</select>';
+
+            // --- Filter für Bild-Status ---
+            $selected_image_status = !empty($_REQUEST['image_status_filter']) ? sanitize_key($_REQUEST['image_status_filter']) : '';
+            echo '<select name="image_status_filter">';
+            echo '<option value="">' . __('Alle Bild-Status', 'lego-wawi') . '</option>';
+            echo '<option value="has_image"' . selected($selected_image_status, 'has_image', false) . '>' . __('Mit Bild', 'lego-wawi') . '</option>';
+            echo '<option value="no_image"' . selected($selected_image_status, 'no_image', false) . '>' . __('Ohne Bild', 'lego-wawi') . '</option>';
+            echo '</select>';
+
+            // --- Filter für Nachfrage-Score ---
+            $demand_filter_options = [
+                '' => __('Alle Nachfrage-Scores', 'lego-wawi'),
+                'high' => __('Hoch (75+)', 'lego-wawi'),
+                'medium' => __('Mittel (40-74)', 'lego-wawi'),
+                'low' => __('Niedrig (< 40)', 'lego-wawi'),
+                'none' => __('Ohne Score', 'lego-wawi'),
+            ];
+            $current_demand_filter = !empty($_REQUEST['demand_filter']) ? sanitize_key($_REQUEST['demand_filter']) : '';
+            echo '<select name="demand_filter">';
+            foreach ($demand_filter_options as $value => $label) {
+                printf(
+                    '<option value="%s" %s>%s</option>',
+                    esc_attr($value),
+                    selected($current_demand_filter, $value, false),
+                    esc_html($label)
+                );
+            }
+            echo '</select>';
+
+            submit_button(__('Filtern', 'lego-wawi'), 'button', 'filter_action', false, ['id' => 'post-query-submit']);
+
+            // --- Filter zurücksetzen Button ---
+            if (!empty($this->user_filters)) {
+                $reset_url = add_query_arg('lww_reset_filters', 'true');
+                $reset_url = remove_query_arg(['paged', 's'], $reset_url);
+                echo ' <a href="' . esc_url($reset_url) . '" class="button">' . __('Filter zurücksetzen', 'lego-wawi') . '</a>';
+            }
+
+            echo '</div>';
+        }
     }
 
     /**
@@ -260,19 +472,13 @@ class LWW_Inventory_List_Table extends WP_List_Table {
         // Paginierung
         $per_page     = $this->get_items_per_page('inventory_items_per_page', 20);
         $current_page = $this->get_pagenum();
-        $total_items  = self::get_item_count(); // Statische Hilfsfunktion
-
-        $this->set_pagination_args([
-            'total_items' => $total_items,
-            'per_page'    => $per_page
-        ]);
 
         // WP_Query Argumente
         $args = [
             'post_type'      => 'lww_inventory_item',
             'posts_per_page' => $per_page,
             'paged'          => $current_page,
-            'post_status'    => ['publish', 'draft'], // Zeige 'new' (publish) und 'used' (draft)
+            'post_status'    => ['publish'],
         ];
 
         // Sortierung
@@ -299,32 +505,102 @@ class LWW_Inventory_List_Table extends WP_List_Table {
                 $args['orderby'] = 'meta_value_num';
                 $args['order'] = $order;
                 break;
+            case 'demand': // NEU
+                $args['meta_key'] = '_lww_demand_score';
+                $args['orderby'] = 'meta_value_num';
+                $args['order'] = $order;
+                break;
         }
 
-        // Suche
+        // Suche wird über pre_get_posts gehandhabt
         if (!empty($_REQUEST['s'])) {
-            $search_term = sanitize_text_field($_REQUEST['s']);
-            $args['s'] = $search_term;
-            // TODO: Suche auch in Meta-Feldern (z.B. _boid) erweitern
+            $args['s'] = sanitize_text_field($_REQUEST['s']);
+        }
+
+        // Meta Query für Filter
+        $args['meta_query'] = ['relation' => 'AND'];
+        if (!empty($_REQUEST['condition_filter'])) {
+            $args['meta_query'][] = [
+                'key' => '_condition',
+                'value' => sanitize_key($_REQUEST['condition_filter']),
+            ];
+        }
+        if (!empty($_REQUEST['wc_status_filter'])) {
+            if ($_REQUEST['wc_status_filter'] === 'synced') {
+                 $args['meta_query'][] = ['key' => '_lww_wc_variation_id', 'compare' => 'EXISTS'];
+            } elseif ($_REQUEST['wc_status_filter'] === 'not_synced') {
+                 $args['meta_query'][] = ['key' => '_lww_wc_variation_id', 'compare' => 'NOT EXISTS'];
+            }
+        }
+        if (!empty($_REQUEST['demand_filter'])) {
+            $demand_filter = sanitize_key($_REQUEST['demand_filter']);
+            switch ($demand_filter) {
+                case 'high':
+                    $args['meta_query'][] = ['key' => '_lww_demand_score', 'value' => 75, 'compare' => '>=', 'type' => 'NUMERIC'];
+                    break;
+                case 'medium':
+                    $args['meta_query'][] = ['key' => '_lww_demand_score', 'value' => [40, 74], 'compare' => 'BETWEEN', 'type' => 'NUMERIC'];
+                    break;
+                case 'low':
+                    $args['meta_query'][] = ['key' => '_lww_demand_score', 'value' => 40, 'compare' => '<', 'type' => 'NUMERIC'];
+                    break;
+                case 'none':
+                    $args['meta_query'][] = ['key' => '_lww_demand_score', 'compare' => 'NOT EXISTS'];
+                    break;
+            }
+        }
+
+        // Bild-Status Filter
+        if (!empty($_REQUEST['image_status_filter'])) {
+            $image_status_filter = sanitize_key($_REQUEST['image_status_filter']);
+            $part_query_args = [
+                'post_type' => 'lww_part',
+                'posts_per_page' => -1,
+                'fields' => 'ids',
+                'meta_query' => [
+                    [
+                        'key' => '_thumbnail_id',
+                        'compare' => ($image_status_filter === 'has_image') ? 'EXISTS' : 'NOT EXISTS',
+                    ]
+                ]
+            ];
+            $part_ids_with_status = get_posts($part_query_args);
+
+            if (empty($part_ids_with_status)) {
+                $part_ids_with_status = [0]; // Sicherstellen, dass die 'IN' Query nicht leer ist
+            }
+
+            $args['meta_query'][] = [
+                'key' => '_lww_part_id',
+                'value' => $part_ids_with_status,
+                'compare' => 'IN'
+            ];
+        }
+
+        // Taxonomie-Query für Filter
+        $args['tax_query'] = ['relation' => 'AND'];
+        if (!empty($_REQUEST['lww_inventory_location'])) {
+            $args['tax_query'][] = [
+                'taxonomy' => 'lww_inventory_location',
+                'field'    => 'slug',
+                'terms'    => sanitize_text_field($_REQUEST['lww_inventory_location']),
+            ];
         }
 
         $query = new WP_Query($args);
         $this->items = $query->posts;
-    }
-    
-    /**
-     * Hilfsfunktion: Zählt alle Items für die Paginierung.
-     */
-    public static function get_item_count() {
-        $count_data = wp_count_posts('lww_inventory_item');
-        return $count_data->publish + $count_data->draft;
+
+        $this->set_pagination_args([
+            'total_items' => $query->found_posts,
+            'per_page'    => $per_page
+        ]);
     }
     
     /**
      * Zeigt eine Nachricht an, wenn keine Items gefunden wurden.
      */
     public function no_items() {
-        _e('Keine Inventar-Items gefunden. Bitte führe zuerst einen Inventar-Import durch.', 'lego-wawi');
+        _e('Keine Inventar-Items gefunden. Bitte führe zuerst einen Inventar-Import durch oder passe deine Filter an.', 'lego-wawi');
     }
 
 } // Ende LWW_Inventory_List_Table
@@ -348,26 +624,24 @@ function lww_render_inventory_ui_page() {
 
     ?>
     <div class="wrap lww-wrap">
-        <h1><span class="dashicons dashicons-list-view lww-title-icon"></span> <?php _e('BrickOwl Inventar Verwalten', 'lego-wawi'); ?></h1>
-        <p><?php _e('Hier siehst du deinen importierten BrickOwl-Bestand. Wähle Artikel aus, um WooCommerce-Produkte zu erstellen oder zu aktualisieren.', 'lego-wawi'); ?></p>
+        <h1><img src="<?php echo esc_url(LWW_PLUGIN_URL . 'assets/img/bricksberg-logo.png'); ?>" alt="Bricksberg Logo" class="lww-header-logo" /> <?php _e('Inventar Verwalten', 'lego-wawi'); ?></h1>
+        <p><?php _e('Hier siehst du deinen importierten Bestand. Wähle Artikel aus, um WooCommerce-Produkte zu erstellen oder zu aktualisieren.', 'lego-wawi'); ?></p>
 
         <?php settings_errors('lww_inventory_messages'); // Für zukünftige Nachrichten ?>
 
         <div class="lww-card">
-            <form id="inventory-filter" method="post">
+            <form id="inventory-filter" method="get">
                 <input type="hidden" name="page" value="<?php echo esc_attr($_REQUEST['page'] ?? ''); ?>" />
                 
-                <?php $inventory_list_table->search_box(__('Inventar durchsuchen', 'lego-wawi'), 'lww-inventory-search'); ?>
-                
-                <?php $inventory_list_table->display(); // Zeigt die Tabelle an ?>
+                <?php 
+                $inventory_list_table->search_box(__('Inventar durchsuchen', 'lego-wawi'), 'lww-inventory-search');
+                $inventory_list_table->display(); // Zeigt die Tabelle an 
+                ?>
             </form>
         </div>
     </div>
     
     <?php
-    // TODO: JavaScript für die AJAX-Handler hier einbinden (enqueue)
-    // Dieses Skript würde auf Klicks auf '.lww-ajax-create-wc-product' lauschen
-    // und einen wp_ajax_... Call mit der 'data-item-id' machen.
 }
 
 ?>

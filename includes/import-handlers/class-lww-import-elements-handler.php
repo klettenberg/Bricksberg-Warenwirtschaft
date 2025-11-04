@@ -7,38 +7,38 @@ if (!defined('ABSPATH')) exit;
 
 class LWW_Import_Elements_Handler extends LWW_Import_Handler_Base {
 
+    public function start_job($job_id) {
+        self::$post_cache = [];
+    }
+
     public function process_row($job_id, $row_data_raw, $header_map) {
         $data = $this->get_data_from_row($row_data_raw, $header_map);
+        $line_number = ($job_queue = get_post_meta($job_id, '_job_queue', true)) ? ($job_queue[get_post_meta($job_id, '_current_task_index', true)]['rows_processed'] ?? 0) + 1 : 0;
 
         $element_id = sanitize_text_field($data['element_id'] ?? '');
         $part_num = sanitize_text_field($data['part_num'] ?? ''); // Rebrickable Part Num
         $color_id_external = intval($data['color_id'] ?? -1); // Rebrickable Color ID
 
-        if (empty($element_id) || empty($part_num) || $color_id_external == -1) {
-            lww_log_to_job($job_id, sprintf('WARNUNG (Elements): Zeile übersprungen. ElementID, PartNum oder ColorID fehlt/ungültig. Data: %s', implode(', ', $data)));
+        if (empty($element_id) || empty($part_num) || $color_id_external < 0) {
+            lww_log_to_job($job_id, sprintf('WARNUNG (Elements): Zeile %d übersprungen. ElementID, PartNum oder ColorID fehlt/ungültig.', $line_number));
             return;
         }
 
-        // --- 1. Finde die WordPress Post IDs ---
-        
-        // KORRIGIERT: $part_num ist die Rebrickable ID, nicht die BrickOwl ID (BOID).
-        // Wir verwenden find_post_by_meta, analog zum Color-Handler.
-        $part_meta_key = '_lww_rebrickable_id'; // Annahme: Meta-Key für die Part-Nummer
-        $part_post_id = $this->find_post_by_meta('lww_part', $part_meta_key, $part_num);
+        // --- 1. Finde die WordPress Post IDs --- 
+        $part_post_id = $this->find_post_by_meta('lww_part', '_lww_part_num', $part_num);
 
         if (empty($part_post_id)) {
-            lww_log_to_job($job_id, sprintf('WARNUNG (Elements): PartNum "%s" (für Element %s) nicht im Katalog gefunden.', $part_num, $element_id));
+            lww_log_unresolved_reference($job_id, 'elements.csv', 'Part Number', $part_num, $line_number);
             return;
         }
 
-        // Diese Funktion scheint korrekt zu sein (sofern in Base definiert)
         $color_post_id = $this->find_color_by_rebrickable_id($color_id_external);
         if (empty($color_post_id)) {
-             lww_log_to_job($job_id, sprintf('WARNUNG (Elements): Color-ID "%d" (für Element %s, Part %s) nicht im Katalog gefunden.', $color_id_external, $element_id, $part_num));
+             lww_log_unresolved_reference($job_id, 'elements.csv', 'Color ID (Rebrickable)', (string)$color_id_external, $line_number);
              return;
         }
 
-        // --- 2. Element ID als Meta-Feld speichern ---
+        // --- 2. Element ID als Meta-Feld speichern --- 
         // Wir speichern die Element ID am Part Post, zusammen mit der Color ID,
         // da ein Part mehrere Element IDs haben kann (eine pro Farbe).
         // Format: Speichere ein Array von [Color_Post_ID] => ElementID
@@ -49,18 +49,10 @@ class LWW_Import_Elements_Handler extends LWW_Import_Handler_Base {
             $current_elements = [];
         }
 
-        // Erstelle einen eindeutigen Schlüssel für dieses Element im Array
-        $element_key = $color_post_id; // Die Color Post ID ist der Schlüssel
-        $element_value = $element_id;
-
-        // Update oder füge das Element hinzu
-        $current_elements[$element_key] = $element_value;
-
-        // Speichere das aktualisierte Array
-        update_post_meta($part_post_id, $meta_key, $current_elements);
-
-        // Optional: Log nur bei Änderungen oder neuen Einträgen, um Log-Spam zu vermeiden.
-        // lww_log_to_job($job_id, sprintf('INFO (Elements): Element %s für Part %s / Color %d hinzugefügt/aktualisiert.', $element_id, $part_num, $color_id_external));
+        // Nur aktualisieren, wenn sich der Wert geändert hat
+        if (!isset($current_elements[$color_post_id]) || $current_elements[$color_post_id] !== $element_id) {
+            $current_elements[$color_post_id] = $element_id;
+            update_post_meta($part_post_id, $meta_key, $current_elements);
+        }
     }
 }
-// KORRIGIERT: Überflüssige Klammer entfernt

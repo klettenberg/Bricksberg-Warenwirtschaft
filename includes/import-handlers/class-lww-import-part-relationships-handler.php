@@ -14,12 +14,7 @@ if (!defined('ABSPATH')) exit;
 class LWW_Import_Part_Relationships_Handler extends LWW_Import_Handler_Base {
 
     /**
-     * Cache für Part Boid (Part-Nummer) -> Post-ID Lookups.
-     */
-    private static $part_boid_cache = [];
-
-    /**
-     * NEU: Sammlung aller Beziehungen, die gespeichert werden sollen.
+     * Sammlung aller Beziehungen, die gespeichert werden sollen.
      * Format: [ child_part_id => [ rel_type => [parent_id1, parent_id2] ] ]
      */
     private static $relations_to_save = [];
@@ -29,7 +24,7 @@ class LWW_Import_Part_Relationships_Handler extends LWW_Import_Handler_Base {
      */
     public function start_job($job_id) {
         // Caches für diesen Job-Lauf zurücksetzen
-        self::$part_boid_cache = [];
+        self::$post_cache = [];
         self::$relations_to_save = [];
     }
 
@@ -38,26 +33,27 @@ class LWW_Import_Part_Relationships_Handler extends LWW_Import_Handler_Base {
      */
     public function process_row($job_id, $row_data_raw, $header_map) {
         $data = $this->get_data_from_row($row_data_raw, $header_map);
+        $line_number = ($job_queue = get_post_meta($job_id, '_job_queue', true)) ? ($job_queue[get_post_meta($job_id, '_current_task_index', true)]['rows_processed'] ?? 0) + 1 : 0;
 
         $rel_type = sanitize_text_field($data['rel_type'] ?? ''); // 'A', 'P', 'M', etc.
         $child_part_num = sanitize_text_field($data['child_part_num'] ?? '');
         $parent_part_num = sanitize_text_field($data['parent_part_num'] ?? '');
 
         if (empty($rel_type) || empty($child_part_num) || empty($parent_part_num)) {
-            lww_log_to_job($job_id, sprintf('WARNUNG (Part Rel): Zeile übersprungen. Typ, Child oder Parent PartNum fehlt. Data: %s', implode(', ', $data)));
+            lww_log_to_job($job_id, sprintf('WARNUNG (Part Rel): Zeile %d übersprungen. Typ, Child oder Parent PartNum fehlt.', $line_number));
             return;
         }
 
-        // --- 1. Finde die WordPress Post IDs (mit Caching) ---
-        $child_part_id = $this->get_cached_part_id_by_boid($child_part_num);
+        // --- 1. Finde die WordPress Post IDs (mit Caching) --- KORRIGIERT: Spezifische Funktion verwenden
+        $child_part_id = $this->find_part_by_rebrickable_num($child_part_num);
         if (empty($child_part_id)) {
-            lww_log_to_job($job_id, sprintf('WARNUNG (Part Rel): Child PartNum "%s" nicht im Katalog gefunden.', $child_part_num));
+            lww_log_unresolved_reference($job_id, 'part_relationships.csv', 'Child Part Number', $child_part_num, $line_number);
             return;
         }
 
-        $parent_part_id = $this->get_cached_part_id_by_boid($parent_part_num);
+        $parent_part_id = $this->find_part_by_rebrickable_num($parent_part_num);
         if (empty($parent_part_id)) {
-            lww_log_to_job($job_id, sprintf('WARNUNG (Part Rel): Parent PartNum "%s" nicht im Katalog gefunden.', $parent_part_num));
+            lww_log_unresolved_reference($job_id, 'part_relationships.csv', 'Parent Part Number', $parent_part_num, $line_number);
             return;
         }
 
@@ -82,6 +78,11 @@ class LWW_Import_Part_Relationships_Handler extends LWW_Import_Handler_Base {
      * @param int $job_id Die ID des aktuellen Import-Jobs.
      */
     public function finish_job($job_id) {
+        if (empty(self::$relations_to_save)) {
+            lww_log_to_job($job_id, 'INFO (Part Rel): Keine neuen Beziehungen zum Speichern gefunden.');
+            return;
+        }
+
         lww_log_to_job($job_id, sprintf('INFO (Part Rel): Speichere gesammelte Beziehungen für %d Teile...', count(self::$relations_to_save)));
 
         $meta_key = '_lww_part_relationships';
@@ -90,7 +91,7 @@ class LWW_Import_Part_Relationships_Handler extends LWW_Import_Handler_Base {
             
             // Bereinige Duplikate, die ggf. in der CSV waren
             foreach ($relationships as $type => $parent_ids) {
-                $relationships[$type] = array_unique($parent_ids);
+                $relationships[$type] = array_values(array_unique($parent_ids));
             }
 
             // Speichere das finale, saubere Array für dieses Teil.
@@ -103,30 +104,6 @@ class LWW_Import_Part_Relationships_Handler extends LWW_Import_Handler_Base {
 
         // Speicher freigeben
         self::$relations_to_save = [];
-        self::$part_boid_cache = [];
-    }
-
-
-    /**
-     * Wrapper-Funktion, die die Part-Post-ID aus einem Cache holt
-     * oder per DB-Abfrage sucht und dann cacht.
-     *
-     * @param string $part_boid
-     * @return int|null Post-ID oder null, wenn nicht gefunden.
-     */
-    private function get_cached_part_id_by_boid($part_boid) {
-        // Prüfe, ob der Wert bereits im Cache ist
-        if (isset(self::$part_boid_cache[$part_boid])) {
-            return self::$part_boid_cache[$part_boid];
-        }
-
-        // Nicht im Cache: Führe die eigentliche (teure) Suche aus
-        // (Diese Funktion kommt aus deiner LWW_Import_Handler_Base Klasse)
-        $post_id = $this->find_part_by_boid($part_boid);
-
-        // Speichere das Ergebnis im Cache
-        self::$part_boid_cache[$part_boid] = $post_id;
-
-        return $post_id;
+        self::$post_cache = [];
     }
 }

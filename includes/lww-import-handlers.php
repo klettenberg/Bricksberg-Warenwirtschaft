@@ -1,6 +1,6 @@
 <?php
 /**
- * Modul: Import-Handler (v9.0)
+ * Modul: Upload & Job Erstellung (v12.0)
  *
  * Behandelt Datei-Uploads und erstellt Jobs in der Warteschlange
  * für Katalog- und Inventar-Importe.
@@ -8,7 +8,7 @@
 if (!defined('ABSPATH')) exit;
 
 /**
- * Handler für Katalog-CSV-Upload (Phase 2a).
+ * Handler für Katalog-CSV-Upload.
  * Erstellt einen neuen Job vom Typ 'catalog_import'.
  */
 function lww_catalog_import_handler() {
@@ -21,7 +21,7 @@ function lww_catalog_import_handler() {
     }
     if (!isset($_FILES['lww_csv_files']) || empty($_FILES['lww_csv_files']['name'])) {
          add_settings_error('lww_messages', 'no_file_array', __('Keine Dateien im Upload-Array gefunden.', 'lego-wawi'), 'error');
-         wp_redirect(admin_url('admin.php?page=' . LWW_PLUGIN_SLUG . '&tab=tab_catalog_import'));
+         wp_redirect(admin_url('admin.php?page=lww_import_ui'));
          exit;
     }
 
@@ -77,7 +77,6 @@ function lww_catalog_import_handler() {
             // Fall 4: Unbekannter/unerlaubter Dateityp
             else {
                  add_settings_error('lww_messages', 'type_error_' . $key, sprintf(__('Dateityp von %s nicht unterstützt (nur CSV, ZIP, GZ).', 'lego-wawi'), esc_html($name)), 'warning');
-                 // Kein $errors_found = true;, da es nur eine Warnung ist
             }
 
             // Wenn die Verarbeitung erfolgreich war, Pfad speichern
@@ -93,13 +92,12 @@ function lww_catalog_import_handler() {
         }
     } // Ende foreach
 
-    // Wenn Fehler aufgetreten sind ODER keine gültige Datei hochgeladen wurde
     if ($errors_found || !$at_least_one_file_uploaded) {
         add_settings_error('lww_messages', 'upload_failed', __('Einige Dateien konnten nicht verarbeitet werden oder es wurde keine gültige Datei hochgeladen. Der Job wurde nicht erstellt.', 'lego-wawi'), $errors_found ? 'error' : 'warning');
         // Temporäre Dateien löschen, falls welche erstellt wurden
         foreach ($import_files as $path) { @unlink($path); }
         set_transient('settings_errors', get_settings_errors(), 30);
-        wp_safe_redirect(admin_url('admin.php?page=' . LWW_PLUGIN_SLUG . '&tab=tab_catalog_import'));
+        wp_safe_redirect(admin_url('admin.php?page=lww_import_ui'));
         exit;
     }
 
@@ -110,74 +108,75 @@ function lww_catalog_import_handler() {
         'inventory_parts', 'inventory_sets', 'inventory_minifigs'
     ];
 
-    // Erstellt die "Aufgabenliste" (job_queue) für diesen spezifischen Job,
-    // basierend auf den erfolgreich hochgeladenen Dateien und der korrekten Reihenfolge.
     $job_queue = [];
+    $job_title_parts = [];
     foreach($processing_order as $key) {
         if(isset($import_files[$key])) {
             $job_queue[] = [
-                'key'            => $key,                 // Eindeutiger Schlüssel der Datei (z.B. 'colors')
-                'path'           => $import_files[$key],  // Absoluter Pfad zur entpackten CSV-Datei
-                'status'         => 'pending',           // Status dieser Aufgabe ('pending', 'running', 'complete', 'failed')
-                'rows_processed' => 0,                   // Zähler für verarbeitete Zeilen
-                'total_rows'     => 0,                   // Gesamtzahl der Zeilen (wird später geschätzt/ermittelt)
+                'key'            => $key,
+                'path'           => $import_files[$key],
+                'status'         => 'pending',
+                'rows_processed' => 0,
+                'total_rows'     => 0, // Wird im Batch-Prozessor ermittelt
             ];
+            $job_title_parts[] = $key;
         }
     }
 
-    // Wenn nach Filterung keine relevanten Dateien übrig bleiben (unwahrscheinlich nach obiger Prüfung, aber sicher ist sicher)
     if (empty($job_queue)) {
          add_settings_error('lww_messages', 'no_valid_files_queued', __('Keine der hochgeladenen Dateien war für den Katalog-Import relevant.', 'lego-wawi'), 'warning');
-         // Temporäre Dateien löschen
          foreach ($import_files as $path) { @unlink($path); }
          set_transient('settings_errors', get_settings_errors(), 30);
-         wp_safe_redirect(admin_url('admin.php?page=' . LWW_PLUGIN_SLUG . '&tab=tab_catalog_import'));
+         wp_safe_redirect(admin_url('admin.php?page=lww_import_ui'));
          exit;
     }
 
-    // 5. Neuen Job-Post (CPT 'lww_job') in der Datenbank erstellen
+    $priority = (int) get_option('lww_job_priority_catalog_import', 10);
+
+    // 5. Neuen Job-Post erstellen
+    $job_title = sprintf(
+        __('Katalog-Import: %s', 'lego-wawi'),
+        implode(', ', $job_title_parts)
+    );
+
     $job_id = wp_insert_post([
-        'post_title'   => sprintf(__('Katalog-Import (%d Dateien)', 'lego-wawi'), count($job_queue)) . ' - ' . date_i18n('d.m.Y H:i'), // Aussagekräftiger Titel
-        'post_type'    => 'lww_job',        // Post-Typ ist 'lww_job'
-        'post_status'  => 'lww_pending',    // Startet im Status "Wartend"
-        'post_author'  => get_current_user_id(), // Ordnet den Job dem aktuellen Benutzer zu
-    ], true); // true gibt WP_Error bei Fehler zurück
+        'post_title'   => $job_title . ' - ' . date_i18n('d.m.Y H:i'),
+        'post_type'    => 'lww_job',
+        'post_status'  => 'lww_pending',
+        'post_author'  => get_current_user_id(),
+        'menu_order'   => $priority,
+    ], true);
 
     if (is_wp_error($job_id)) {
-        // Fehler beim Erstellen des Job-Posts
          add_settings_error('lww_messages', 'job_creation_failed', __('Fehler beim Erstellen des Import-Jobs: ', 'lego-wawi') . $job_id->get_error_message(), 'error');
-         // Temporäre Dateien löschen
          foreach ($import_files as $path) { @unlink($path); }
          set_transient('settings_errors', get_settings_errors(), 30);
-         wp_safe_redirect(admin_url('admin.php?page=' . LWW_PLUGIN_SLUG . '&tab=tab_catalog_import'));
+         wp_safe_redirect(admin_url('admin.php?page=lww_import_ui'));
          exit;
     }
 
     // 6. Job-Details als Metadaten speichern
-    update_post_meta($job_id, '_job_type', 'catalog_import');       // Typ des Jobs
-    update_post_meta($job_id, '_job_queue', $job_queue);             // Die Liste der zu verarbeitenden Dateien (Aufgaben)
-    update_post_meta($job_id, '_current_task_index', 0);           // Index der aktuellen Aufgabe (beginnt bei 0)
-    update_post_meta($job_id, '_job_log', [sprintf('[%s] Job erstellt. %d Datei(en) in der Warteschlange.', date('H:i:s'), count($job_queue))]); // Erste Log-Nachricht
+    update_post_meta($job_id, '_job_type', 'catalog_import');
+    update_post_meta($job_id, '_job_queue', $job_queue);
+    update_post_meta($job_id, '_current_task_index', 0);
+    lww_log_to_job($job_id, sprintf('Job erstellt. %d Datei(en) in der Warteschlange.', count($job_queue)));
 
-    // 7. Cron-Job starten/aufwecken, falls er nicht schon läuft
     lww_start_cron_job();
 
-    // 8. Erfolgsmeldung speichern und zur Job-Liste weiterleiten
     add_settings_error('lww_messages', 'job_created', __('Neuer Katalog-Import-Job wurde erfolgreich erstellt und zur Warteschlange hinzugefügt.', 'lego-wawi'), 'success');
-    set_transient('settings_errors', get_settings_errors(), 30); // Speichert die Nachricht für die nächste Seite
+    set_transient('settings_errors', get_settings_errors(), 30);
 
-    wp_safe_redirect(admin_url('admin.php?page=' . LWW_PLUGIN_SLUG . '&tab=tab_jobs')); // Leitet zur Job-Liste weiter
+    wp_safe_redirect(admin_url('admin.php?page=lww_jobs_ui'));
     exit;
 }
-add_action('admin_post_lww_upload_catalog_csv', 'lww_catalog_import_handler'); // Hook für das Katalog-Formular
+add_action('admin_post_lww_upload_catalog_csv', 'lww_catalog_import_handler');
 
 
 /**
- * Handler für Inventar-CSV-Upload (Phase 2b).
+ * Handler für Inventar-CSV-Upload.
  * Erstellt einen neuen Job vom Typ 'inventory_import'.
  */
 function lww_inventory_import_handler() {
-    // 1. Sicherheit prüfen
     if (!isset($_POST['_wpnonce']) || !wp_verify_nonce($_POST['_wpnonce'], 'lww_inventory_import_nonce')) {
         wp_die(__('Sicherheitsüberprüfung fehlgeschlagen.', 'lego-wawi'));
     }
@@ -187,25 +186,8 @@ function lww_inventory_import_handler() {
      if (!isset($_FILES['inventory_csv_file']) || $_FILES['inventory_csv_file']['error'] !== UPLOAD_ERR_OK) {
         add_settings_error('lww_messages', 'inv_upload_error', __('Fehler beim Upload der Inventar-Datei: ', 'lego-wawi') . lww_get_upload_error_message($_FILES['inventory_csv_file']['error'] ?? UPLOAD_ERR_NO_FILE), 'error');
         set_transient('settings_errors', get_settings_errors(), 30);
-        wp_safe_redirect(admin_url('admin.php?page=' . LWW_PLUGIN_SLUG . '&tab=tab_inventory_import'));
+        wp_safe_redirect(admin_url('admin.php?page=lww_import_ui'));
         exit;
-    }
-
-     // Prüfen, ob Stammdaten vorhanden sind (erneut, zur Sicherheit)
-    $catalog_counts = get_option('lww_catalog_counts', []);
-    $required_data_keys = ['colors', 'parts'];
-    $core_data_imported = true;
-    foreach($required_data_keys as $key) {
-        if (empty($catalog_counts[$key]) || $catalog_counts[$key] === 0) {
-            $core_data_imported = false;
-            break;
-        }
-    }
-    if (!$core_data_imported) {
-         add_settings_error('lww_messages', 'inv_missing_core_data', __('Inventar-Import nicht möglich, da wichtige Katalogdaten (Farben, Teile) fehlen. Bitte führe zuerst den Katalog-Import durch.', 'lego-wawi'), 'error');
-         set_transient('settings_errors', get_settings_errors(), 30);
-         wp_safe_redirect(admin_url('admin.php?page=' . LWW_PLUGIN_SLUG . '&tab=tab_inventory_import'));
-         exit;
     }
 
     $upload_dir = wp_upload_dir();
@@ -216,19 +198,16 @@ function lww_inventory_import_handler() {
     if ($file_ext !== 'csv') {
         add_settings_error('lww_messages', 'inv_wrong_type', __('Falscher Dateityp. Bitte lade eine .csv-Datei hoch.', 'lego-wawi'), 'error');
         set_transient('settings_errors', get_settings_errors(), 30);
-        wp_safe_redirect(admin_url('admin.php?page=' . LWW_PLUGIN_SLUG . '&tab=tab_inventory_import'));
+        wp_safe_redirect(admin_url('admin.php?page=lww_import_ui'));
         exit;
     }
 
-    // Zieldatei im Upload-Ordner
     $timestamp = time();
     $target_csv_path = $upload_dir['basedir'] . '/lww_import_inventory_' . $timestamp . '.csv';
+    $priority = (int) get_option('lww_job_priority_inventory_import', 10);
 
     if (is_uploaded_file($tmp_name) && move_uploaded_file($tmp_name, $target_csv_path)) {
-        // Datei erfolgreich verschoben
-
-        // Aufgabenliste für diesen Job (nur eine Aufgabe)
-         $job_queue = [[
+         $job_queue = [[ 
             'key'            => 'inventory',
             'path'           => $target_csv_path,
             'status'         => 'pending',
@@ -236,118 +215,172 @@ function lww_inventory_import_handler() {
             'total_rows'     => 0,
         ]];
 
-        // Neuen Job-Post erstellen
         $job_id = wp_insert_post([
-            'post_title'   => __('Inventar-Import', 'lego-wawi') . ' - ' . date_i18n('d.m.Y H:i'),
+            'post_title'   => sprintf(__('Inventar-Import (%s)', 'lego-wawi'), esc_html($name)) . ' - ' . date_i18n('d.m.Y H:i'),
             'post_type'    => 'lww_job',
             'post_status'  => 'lww_pending',
             'post_author'  => get_current_user_id(),
+            'menu_order'   => $priority,
         ], true);
 
         if (is_wp_error($job_id)) {
              add_settings_error('lww_messages', 'inv_job_creation_failed', __('Fehler beim Erstellen des Inventar-Import-Jobs: ', 'lego-wawi') . $job_id->get_error_message(), 'error');
-             @unlink($target_csv_path); // Temporäre Datei löschen
+             @unlink($target_csv_path);
         } else {
-            // Job-Details speichern
             update_post_meta($job_id, '_job_type', 'inventory_import');
             update_post_meta($job_id, '_job_queue', $job_queue);
             update_post_meta($job_id, '_current_task_index', 0);
-            update_post_meta($job_id, '_job_log', [sprintf('[%s] Inventar-Import-Job erstellt.', date('H:i:s'))]);
+            lww_log_to_job($job_id, 'Inventar-Import-Job erstellt.');
 
-            // Cron starten/aufwecken
             lww_start_cron_job();
 
             add_settings_error('lww_messages', 'inv_job_created', __('Neuer Inventar-Import-Job wurde erfolgreich erstellt.', 'lego-wawi'), 'success');
         }
 
     } else {
-        // Fehler beim Verschieben der Datei
          add_settings_error('lww_messages', 'inv_move_error', __('Die hochgeladene Inventar-Datei konnte nicht verarbeitet werden.', 'lego-wawi'), 'error');
     }
 
     set_transient('settings_errors', get_settings_errors(), 30);
-    wp_safe_redirect(admin_url('admin.php?page=' . LWW_PLUGIN_SLUG . '&tab=tab_jobs')); // Zur Job-Liste leiten
+    wp_safe_redirect(admin_url('admin.php?page=lww_jobs_ui'));
     exit;
 }
-add_action('admin_post_lww_upload_inventory_csv', 'lww_inventory_import_handler'); // Hook für das Inventar-Formular
+add_action('admin_post_lww_upload_inventory_csv', 'lww_inventory_import_handler');
+
+/**
+ * Handler für Inventar-Backup-CSV-Upload.
+ * Erstellt einen neuen Job vom Typ 'inventory_backup_import'.
+ */
+function lww_inventory_backup_import_handler() {
+    if (!isset($_POST['_wpnonce']) || !wp_verify_nonce($_POST['_wpnonce'], 'lww_inventory_backup_import_nonce')) {
+        wp_die(__('Sicherheitsüberprüfung fehlgeschlagen.', 'lego-wawi'));
+    }
+    if (!current_user_can('manage_options')) {
+        wp_die(__('Du hast keine Berechtigung.', 'lego-wawi'));
+    }
+    if (!isset($_FILES['inventory_backup_csv_file']) || $_FILES['inventory_backup_csv_file']['error'] !== UPLOAD_ERR_OK) {
+        add_settings_error('lww_messages', 'inv_backup_upload_error', __('Fehler beim Upload der Backup-Datei: ', 'lego-wawi') . lww_get_upload_error_message($_FILES['inventory_backup_csv_file']['error'] ?? UPLOAD_ERR_NO_FILE), 'error');
+        set_transient('settings_errors', get_settings_errors(), 30);
+        wp_safe_redirect(admin_url('admin.php?page=lww_import_ui'));
+        exit;
+    }
+
+    $upload_dir = wp_upload_dir();
+    $tmp_name = $_FILES['inventory_backup_csv_file']['tmp_name'];
+    $name = $_FILES['inventory_backup_csv_file']['name'];
+    $file_ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+
+    if ($file_ext !== 'csv') {
+        add_settings_error('lww_messages', 'inv_backup_wrong_type', __('Falscher Dateityp. Bitte lade eine .csv-Datei hoch.', 'lego-wawi'), 'error');
+        set_transient('settings_errors', get_settings_errors(), 30);
+        wp_safe_redirect(admin_url('admin.php?page=lww_import_ui'));
+        exit;
+    }
+
+    $timestamp = time();
+    $target_csv_path = $upload_dir['basedir'] . '/lww_import_inventory_backup_' . $timestamp . '.csv';
+    $priority = (int) get_option('lww_job_priority_inventory_backup_import', 5);
+
+    if (is_uploaded_file($tmp_name) && move_uploaded_file($tmp_name, $target_csv_path)) {
+        $job_queue = [[ 
+            'key'            => 'inventory_backup',
+            'path'           => $target_csv_path,
+            'status'         => 'pending',
+            'rows_processed' => 0,
+            'total_rows'     => 0,
+        ]];
+
+        $job_id = wp_insert_post([
+            'post_title'   => sprintf(__('Inventar-Backup Import (%s)', 'lego-wawi'), esc_html($name)) . ' - ' . date_i18n('d.m.Y H:i'),
+            'post_type'    => 'lww_job',
+            'post_status'  => 'lww_pending',
+            'post_author'  => get_current_user_id(),
+            'menu_order'   => $priority,
+        ], true);
+
+        if (is_wp_error($job_id)) {
+            add_settings_error('lww_messages', 'inv_backup_job_creation_failed', __('Fehler beim Erstellen des Backup-Import-Jobs: ', 'lego-wawi') . $job_id->get_error_message(), 'error');
+            @unlink($target_csv_path);
+        } else {
+            update_post_meta($job_id, '_job_type', 'inventory_backup_import');
+            update_post_meta($job_id, '_job_queue', $job_queue);
+            update_post_meta($job_id, '_current_task_index', 0);
+            lww_log_to_job($job_id, 'Inventar-Backup-Import-Job erstellt.');
+
+            lww_start_cron_job();
+
+            add_settings_error('lww_messages', 'inv_backup_job_created', __('Neuer Backup-Import-Job wurde erfolgreich erstellt.', 'lego-wawi'), 'success');
+        }
+    } else {
+        add_settings_error('lww_messages', 'inv_backup_move_error', __('Die hochgeladene Backup-Datei konnte nicht verarbeitet werden.', 'lego-wawi'), 'error');
+    }
+
+    set_transient('settings_errors', get_settings_errors(), 30);
+    wp_safe_redirect(admin_url('admin.php?page=lww_jobs_ui'));
+    exit;
+}
+add_action('admin_post_lww_upload_inventory_backup_csv', 'lww_inventory_backup_import_handler');
 
 
-// --- HILFSFUNKTIONEN FÜR DATEI-ENTPACKUNG UND FEHLER ---
+// --- HILFSFUNKTIONEN FÜR DATEI-ENTPACKUNG ---
 
 /**
  * Entpackt eine .zip-Datei und extrahiert die relevante CSV.
- * Sucht nach einer Datei namens "{key}.csv" im Archiv.
- * @param string $zip_path Pfad zur hochgeladenen ZIP-Datei.
- * @param string $target_csv_path Zielpfad für die extrahierte CSV.
- * @param string $file_key Der erwartete Name der CSV ohne Endung (z.B. 'parts').
- * @return bool True bei Erfolg, False bei Fehler.
  */
 function lww_unzip_file($zip_path, $target_csv_path, $file_key) {
-    if (!class_exists('ZipArchive')) return false; // Prüfen, ob Zip-Erweiterung vorhanden ist
+    if (!class_exists('ZipArchive')) return false;
 
     $zip = new ZipArchive;
     if ($zip->open($zip_path) === TRUE) {
-        // Finde die relevante CSV-Datei im ZIP (Groß-/Kleinschreibung ignorieren?)
         $csv_filename_in_zip = $file_key . '.csv';
-        $file_index = $zip->locateName($csv_filename_in_zip, ZipArchive::FL_NOCASE); // FL_NOCASE für mehr Robustheit
+        $file_index = $zip->locateName($csv_filename_in_zip, ZipArchive::FL_NOCASE);
 
         if ($file_index !== false) {
-            // Extrahiere nur diese eine Datei direkt in den Zielpfad
             if ($zip->extractTo(dirname($target_csv_path), $zip->getNameIndex($file_index))) {
-                 // Umbenennen, falls der extrahierte Name Großbuchstaben enthält etc.
                  $extracted_path = dirname($target_csv_path) . '/' . $zip->getNameIndex($file_index);
-                 // Nur umbenennen, wenn Pfad unterschiedlich ist (verhindert Fehler bei identischen Namen)
                  if ($extracted_path !== $target_csv_path) {
                     if (!rename($extracted_path, $target_csv_path)) {
                         $zip->close();
                         @unlink($zip_path);
-                        @unlink($extracted_path); // Aufräumen
-                        return false; // Fehler beim Umbenennen
+                        @unlink($extracted_path);
+                        return false;
                     }
                  }
                  $zip->close();
-                 @unlink($zip_path); // Temporäres ZIP löschen
+                 @unlink($zip_path);
                  return true;
             }
         }
-        $zip->close(); // Wichtig: Immer schließen
+        $zip->close();
     }
-    @unlink($zip_path); // Aufräumen bei Fehler
-    return false; // Fehler beim Öffnen oder Datei nicht gefunden
+    @unlink($zip_path);
+    return false;
 }
 
 /**
- * Entpackt eine .gz-Datei nach $target_csv_path.
- * @param string $gz_path Pfad zur hochgeladenen GZ-Datei.
- * @param string $target_csv_path Zielpfad für die entpackte CSV.
- * @return bool True bei Erfolg, False bei Fehler.
+ * Entpackt eine .gz-Datei.
  */
 function lww_un_gz_file($gz_path, $target_csv_path) {
-    // Puffergröße für das Lesen/Schreiben
-    $buffer_size = 4096; // 4KB
-
-    // Quelldatei (gz) öffnen
+    $buffer_size = 4096;
     $gz_handle = @gzopen($gz_path, 'rb');
     if (!$gz_handle) return false;
 
-    // Zieldatei (csv) öffnen
     $csv_handle = @fopen($target_csv_path, 'wb');
     if (!$csv_handle) {
         gzclose($gz_handle);
         return false;
     }
 
-    // Inhalt Stück für Stück übertragen
     while (!gzeof($gz_handle)) {
         $buffer = gzread($gz_handle, $buffer_size);
-        if ($buffer === false) { // Fehler beim Lesen
+        if ($buffer === false) {
             fclose($csv_handle);
             gzclose($gz_handle);
-            @unlink($target_csv_path); // Unvollständige Zieldatei löschen
+            @unlink($target_csv_path);
             @unlink($gz_path);
              return false;
         }
-        if (fwrite($csv_handle, $buffer) === false) { // Fehler beim Schreiben
+        if (fwrite($csv_handle, $buffer) === false) {
              fclose($csv_handle);
              gzclose($gz_handle);
              @unlink($target_csv_path);
@@ -356,38 +389,9 @@ function lww_un_gz_file($gz_path, $target_csv_path) {
         }
     }
 
-    // Dateien schließen
     gzclose($gz_handle);
     fclose($csv_handle);
-
-    // Temporäre GZ-Datei löschen
     @unlink($gz_path);
-    return true; // Erfolg
-}
-
-/**
- * Gibt eine lesbare Fehlermeldung für PHP Upload-Fehlercodes zurück.
- * @param int $error_code Der PHP UPLOAD_ERR_* Code.
- * @return string Die Fehlermeldung.
- */
-function lww_get_upload_error_message($error_code) {
-    switch ($error_code) {
-        case UPLOAD_ERR_INI_SIZE:
-            return __('Die Datei überschreitet die `upload_max_filesize`-Direktive in php.ini.', 'lego-wawi');
-        case UPLOAD_ERR_FORM_SIZE:
-            return __('Die Datei überschreitet die MAX_FILE_SIZE-Direktive im HTML-Formular.', 'lego-wawi');
-        case UPLOAD_ERR_PARTIAL:
-            return __('Die Datei wurde nur teilweise hochgeladen.', 'lego-wawi');
-        case UPLOAD_ERR_NO_FILE:
-            return __('Es wurde keine Datei hochgeladen.', 'lego-wawi');
-        case UPLOAD_ERR_NO_TMP_DIR:
-            return __('Es fehlt ein temporäres Verzeichnis auf dem Server.', 'lego-wawi');
-        case UPLOAD_ERR_CANT_WRITE:
-            return __('Datei konnte nicht auf die Festplatte geschrieben werden.', 'lego-wawi');
-        case UPLOAD_ERR_EXTENSION:
-            return __('Eine PHP-Erweiterung hat den Datei-Upload gestoppt.', 'lego-wawi');
-        default:
-            return __('Unbekannter Upload-Fehler.', 'lego-wawi');
-    }
+    return true;
 }
 ?>

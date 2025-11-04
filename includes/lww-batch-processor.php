@@ -1,28 +1,11 @@
 <?php
 /**
- * Modul: Batch-Prozessor (v10.0 - Objektorientiert)
+ * Modul: Batch-Prozessor (v13.0)
  * Verarbeitet die Job-Warteschlange (CPT 'lww_job') im Hintergrund.
  * Ruft dynamisch die korrekte Handler-Klasse für die Zeilenverarbeitung auf.
  * Liest Cron-Intervall und Batch-Größen aus den WordPress-Optionen.
  */
 if (!defined('ABSPATH')) exit;
-
-/**
- * Registriert benutzerdefinierte Cron-Intervalle (1, 5, 15 Min.)
- */
-function lww_add_cron_interval($schedules) {
-    if (!isset($schedules['lww_every_minute'])) {
-        $schedules['lww_every_minute'] = [ 'interval' => 60, 'display' => esc_html__('Jede Minute (LWW Standard)', 'lego-wawi')];
-    }
-    if (!isset($schedules['lww_every_5_minutes'])) {
-        $schedules['lww_every_5_minutes'] = [ 'interval' => 300, 'display' => esc_html__('Alle 5 Minuten (LWW)', 'lego-wawi')];
-    }
-    if (!isset($schedules['lww_every_15_minutes'])) {
-        $schedules['lww_every_15_minutes'] = [ 'interval' => 900, 'display' => esc_html__('Alle 15 Minuten (LWW)', 'lego-wawi')];
-    }
-    return $schedules;
-}
-add_filter('cron_schedules', 'lww_add_cron_interval');
 
 // Hook für den Haupt-Cron-Job
 add_action('lww_main_batch_hook', 'lww_run_job_processor');
@@ -70,8 +53,13 @@ function lww_run_job_processor() {
         $job_id = $job_to_process->ID;
         lww_log_system_event('Laufenden Job gefunden: ID ' . $job_id . '. Setze fort.');
     } else {
-        // DANN: Nach dem ältesten wartenden Job suchen
-        $pending_jobs_query = new WP_Query(['post_type' => 'lww_job', 'post_status' => 'lww_pending', 'posts_per_page' => 1, 'orderby' => 'date', 'order' => 'ASC']);
+        // DANN: Nach dem ältesten wartenden Job mit der höchsten Priorität suchen
+        $pending_jobs_query = new WP_Query([
+            'post_type' => 'lww_job',
+            'post_status' => 'lww_pending',
+            'posts_per_page' => 1,
+            'orderby' => ['menu_order' => 'ASC', 'date' => 'ASC'] // Erst nach Priorität, dann nach Datum
+        ]);
         if ($pending_jobs_query->have_posts()) {
              $job_to_process = $pending_jobs_query->posts[0];
              $job_id = $job_to_process->ID;
@@ -86,7 +74,7 @@ function lww_run_job_processor() {
 
     // 3. Job sperren und Status auf 'running' setzen
     $job_type = get_post_meta($job_id, '_job_type', true);
-    update_option('lww_current_running_job_id', $job_id);
+    update_option('lww_current_running_job_id', $job_id, 'no'); // 'no' for autoload
     lww_log_system_event('Globale Sperre für Job ' . $job_id . ' gesetzt.');
 
     if ($job_to_process->post_status === 'lww_pending') {
@@ -107,18 +95,32 @@ function lww_run_job_processor() {
         lww_log_system_event('Starte Verarbeitung Job ' . $job_id . '...');
         if ($job_type === 'catalog_import') {
             lww_process_catalog_job_batch($job_id);
-        } elseif ($job_type === 'inventory_import') {
-            lww_process_inventory_job_batch($job_id);
+        } elseif ($job_type === 'inventory_import' || $job_type === 'inventory_backup_import') {
+            lww_process_inventory_job_batch($job_id, $job_type);
+        } elseif ($job_type === 'demand_analysis') {
+            lww_process_demand_analysis_batch($job_id);
+        } elseif ($job_type === 'description_generation') {
+            lww_process_description_generation_batch($job_id);
+        } elseif ($job_type === 'location_sync') {
+            lww_process_location_sync_batch($job_id);
+        } elseif ($job_type === 'ebay_sync') {
+            lww_process_ebay_sync_batch($job_id);
+        } elseif ($job_type === 'brickowl_sync') {
+            lww_process_brickowl_sync_batch($job_id);
+        } elseif ($job_type === 'data_purge') {
+            lww_process_data_purge_batch($job_id);
+        } elseif ($job_type === 'data_validation') {
+            lww_process_data_validation_batch($job_id);
         } else {
             throw new Exception(sprintf(__('Unbekannter Job-Typ: %s', 'lego-wawi'), esc_html($job_type)));
         }
 
         $current_status = get_post_status($job_id);
         if ($current_status === 'lww_complete' || $current_status === 'lww_failed') {
-            lww_log_system_event('Job ' . $job_id . ' markiert als "' . $current_status . '".');
+            lww_log_system_event('Job ' . $job_id . ' markiert als "' . $current_status . '". Sperre sollte bereits aufgehoben sein.');
         } else if ($current_status === 'lww_running') {
              wp_update_post(['ID' => $job_id, 'post_modified' => current_time('mysql'), 'post_modified_gmt' => current_time('mysql', 1)]);
-             lww_log_system_event('Batch Job ' . $job_id . ' beendet, Status "' . $current_status . '".');
+             lww_log_system_event('Batch Job ' . $job_id . ' beendet, Status "' . $current_status . '". Sperre bleibt aktiv.');
         } else {
             lww_log_system_event('WARNUNG: Unerwarteter Status "' . $current_status . '" nach Batch für Job ' . $job_id);
         }
@@ -126,21 +128,13 @@ function lww_run_job_processor() {
     } catch (Exception $e) {
         lww_fail_job($job_id, 'KRITISCHER FEHLER: ' . $e->getMessage());
         lww_log_system_event('Job ' . $job_id . ' fehlgeschlagen: ' . $e->getMessage());
-    } finally {
-        // 5. Globale Sperre IMMER aufheben
-        if (get_option('lww_current_running_job_id') == $job_id) {
-            delete_option('lww_current_running_job_id');
-            lww_log_system_event('Globale Job-Sperre Job ' . $job_id . ' aufgehoben.');
-        } else {
-             lww_log_system_event('Job-Sperre war bereits aufgehoben (vermutlich Timeout).');
-        }
     }
 
      lww_log_system_event('===== Cron Hook `lww_run_job_processor` ENDE =====');
 }
 
 /**
- * Verarbeitet einen Batch eines KATALOG-Jobs (v10.0 - nutzt Handler)
+ * Verarbeitet einen Batch eines KATALOG-Jobs (v13.0 - mit Caching und Optimierungen)
  */
 function lww_process_catalog_job_batch($job_id) {
     lww_log_system_event('--- Start lww_process_catalog_job_batch (Job ' . $job_id . ') ---');
@@ -178,24 +172,33 @@ function lww_process_catalog_job_batch($job_id) {
         lww_log_system_event('Sprung Z ' . $current_row . ' beendet.');
     }
 
-    // --- Header einlesen (nur beim ersten Mal) ---
+    // --- Header einlesen und Zeilen zählen (nur beim ersten Mal) ---
     $header_map_key = '_header_map_' . $file_key;
     $header_map = get_post_meta($job_id, $header_map_key, true);
-    if ($current_row === 0 || empty($header_map)) {
-        lww_log_system_event('Lese Header...'); $header = @fgetcsv($handle);
+    if ($current_row === 0 || empty($header_map) || empty($job_queue[$task_index]['total_rows'])) {
+        lww_log_system_event('Lese Header und zähle Zeilen...'); 
+        $header = @fgetcsv($handle);
         if ($header && is_array($header) && count($header) > 0) {
             $header_map = array_flip(array_map('trim', array_map('strtolower', $header)));
             update_post_meta($job_id, $header_map_key, $header_map);
-            $current_row++; $job_queue[$task_index]['rows_processed'] = $current_row;
+            $current_row++; 
+            $job_queue[$task_index]['rows_processed'] = $current_row;
+            
+            // Total rows zählen für Fortschrittsanzeige
+            $total_rows = 1; // Header-Zeile
+            while(fgets($handle) !== false) { $total_rows++; }
+            $job_queue[$task_index]['total_rows'] = $total_rows;
+            rewind($handle); // Zurück zum Anfang der Datei
+            fgets($handle); // Header wieder überspringen
+
             update_post_meta($job_id, '_job_queue', $job_queue);
-            lww_log_system_event('Header gelesen.');
+            lww_log_system_event('Header gelesen, ' . $total_rows . ' Zeilen gezählt.');
         } else { @fclose($handle); lww_log_to_job($job_id, sprintf('FEHLER: Header nicht lesbar oder Datei "%s" ist leer. Überspringe.', basename($file_path))); return lww_skip_or_complete_job($job_id, $job_queue, $task_index, 'header_read_error'); }
     }
     if (empty($header_map) || !is_array($header_map)) { @fclose($handle); throw new Exception(sprintf('Header-Map fehlt: %s', $file_key)); }
 
     // --- Handler-Klasse finden (Factory) ---
     static $handler_cache = [];
-    // Baut Klassennamen: 'colors' -> 'LWW_Import_Colors_Handler', 'part_categories' -> 'LWW_Import_Part_Categories_Handler'
     $class_name = 'LWW_Import_' . str_replace(' ', '_', ucwords(str_replace('_', ' ', $file_key))) . '_Handler';
 
     if (!isset($handler_cache[$class_name])) {
@@ -214,8 +217,18 @@ function lww_process_catalog_job_batch($job_id) {
         @fclose($handle); return lww_skip_or_complete_job($job_id, $job_queue, $task_index, 'handler_not_found');
     }
 
+    // Rufe start_job() einmal pro Datei/Job-Kombination auf.
+    static $start_job_called = [];
+    $start_job_key = $job_id . '_' . $file_key;
+    if (!isset($start_job_called[$start_job_key]) && method_exists($handler, 'start_job')) {
+        lww_log_system_event('Rufe start_job() für ' . $class_name . ' auf...');
+        $handler->start_job($job_id);
+        $start_job_called[$start_job_key] = true;
+    }
+
     // --- Batch verarbeiten ---
     $processed_in_this_batch = 0;
+    $total_rows_in_task = $job_queue[$task_index]['total_rows'] ?? 0;
     lww_log_system_event('Starte Batch mit ' . $class_name . ' (Z ' . $current_row . ' bis ca. ' . ($current_row + $batch_size) . ')');
     while ($processed_in_this_batch < $batch_size && !feof($handle)) {
         @set_time_limit(60);
@@ -223,8 +236,10 @@ function lww_process_catalog_job_batch($job_id) {
         $data = @fgetcsv($handle);
         if ($data === FALSE || $data === null || (count($data) === 1 && ($data[0] === null || trim($data[0]) === ''))) { if (feof($handle)) { lww_log_system_event('EOF in while'); break; } $current_row++; continue; }
         
-        // Flexible Spaltenanzahl-Prüfung (manche CSVs haben variable Spalten)
-        // if (count($data) !== count($header_map)) { /* ... fehlerbehandlung ... */ }
+        // Heartbeat, um Timeouts bei langen Batches zu verhindern
+        if (($processed_in_this_batch > 0) && ($processed_in_this_batch % 100) === 0) {
+            wp_update_post(['ID' => $job_id, 'post_modified' => current_time('mysql'), 'post_modified_gmt' => current_time('mysql', 1)]);
+        }
 
         try {
             $handler->process_row($job_id, $data, $header_map);
@@ -239,78 +254,138 @@ function lww_process_catalog_job_batch($job_id) {
     $job_queue[$task_index]['rows_processed'] = $current_row;
     if (feof($handle)) {
         lww_log_system_event('EOF für ' . basename($file_path) . ' erreicht.'); @fclose($handle); @unlink($file_path);
-        $job_queue[$task_index]['status'] = 'complete'; $job_queue[$task_index]['total_rows'] = max(0, $current_row - 1);
-        lww_log_to_job($job_id, sprintf('Aufgabe "%s" abgeschlossen (%d Zeilen).', $file_key, $job_queue[$task_index]['total_rows']));
+        
+        // Rufe finish_job() auf, wenn die Methode im Handler existiert
+        if (method_exists($handler, 'finish_job')) {
+            try {
+                lww_log_system_event('Rufe finish_job() für ' . $class_name . ' auf...');
+                $handler->finish_job($job_id);
+            } catch (Exception $e) {
+                lww_log_to_job($job_id, sprintf('FEHLER in finish_job() für %s: %s', $class_name, $e->getMessage()));
+            }
+        }
+
+        $job_queue[$task_index]['status'] = 'complete'; 
+        $final_processed_rows = max(0, $current_row - 1);
+        $job_queue[$task_index]['total_rows'] = $final_processed_rows;
+        lww_log_to_job($job_id, sprintf('Aufgabe "%s" abgeschlossen (%d Zeilen).', $file_key, $final_processed_rows));
         lww_skip_or_complete_job($job_id, $job_queue, $task_index, 'task_complete');
     } else {
-        @fclose($handle); update_post_meta($job_id, '_job_queue', $job_queue);
-        lww_log_to_job($job_id, sprintf('Aufgabe "%s": Batch beendet, %d Zeilen verarbeitet.', $file_key, max(0, $current_row-1)));
+        @fclose($handle);
+        update_post_meta($job_id, '_job_queue', $job_queue);
+        $log_message = sprintf('Aufgabe "%s": Batch beendet, %s / %s Zeilen verarbeitet.', $file_key, number_format_i18n(max(0, $current_row-1)), number_format_i18n($total_rows_in_task - 1));
+        lww_log_to_job($job_id, $log_message);
     }
      lww_log_system_event('--- Ende lww_process_catalog_job_batch ---');
 }
 
 /**
- * Verarbeitet einen Batch eines INVENTAR-Jobs (v10.0 - nutzt Handler)
+ * Verarbeitet einen Batch eines INVENTAR-Jobs (v12.0 - nutzt Handler)
  */
-function lww_process_inventory_job_batch($job_id) {
-    lww_log_system_event('--- Start lww_process_inventory_job_batch (Job ' . $job_id . ') ---');
+function lww_process_inventory_job_batch($job_id, $job_type = 'inventory_import') {
+    lww_log_system_event('--- Start lww_process_inventory_job_batch (Job ' . $job_id . ', Typ: ' . $job_type . ') ---');
     $job_queue = get_post_meta($job_id, '_job_queue', true); $task_index = 0;
     if (!is_array($job_queue) || !isset($job_queue[$task_index])) { throw new Exception('Inventar-Queue ungültig.'); }
     $current_task = $job_queue[$task_index]; $file_key = $current_task['key'] ?? 'inventory'; $file_path = $current_task['path'] ?? ''; $current_row = isset($current_task['rows_processed']) ? (int)$current_task['rows_processed'] : 0;
     $batch_size = max(50, (int)get_option('lww_inventory_batch_size', 300));
     lww_log_system_event(sprintf('Verarbeite "%s", Z %d, Batch: %d', $file_key, $current_row, $batch_size));
     if (empty($file_path)) { throw new Exception('Kein Pfad für Inventar.'); }
-    if (!file_exists($file_path)) { lww_log_to_job($job_id, sprintf('FEHLER: Inventar-Datei fehlt: %s.', basename($file_path))); wp_update_post(['ID' => $job_id, 'post_status' => 'lww_failed']); return; }
+    if (!file_exists($file_path)) { lww_log_to_job($job_id, sprintf('FEHLER: Inventar-Datei fehlt: %s.', basename($file_path))); wp_update_post(['ID' => $job_id, 'post_status' => 'lww_failed']); delete_option('lww_current_running_job_id'); return; }
     $handle = @fopen($file_path, 'r'); if (!$handle) { throw new Exception(sprintf('Inventar-Datei nicht lesbar: %s', basename($file_path))); }
     if ($current_row > 0) { lww_log_system_event('Springe Z ' . $current_row . '...'); @set_time_limit(300); for ($i = 0; $i < $current_row; $i++) { if (feof($handle)) { lww_log_system_event('WARN: EOF beim Springen Z ' . $current_row); @fclose($handle); return lww_skip_or_complete_job($job_id, $job_queue, $task_index, 'eof_during_skip'); } if (@fgets($handle) === false && !feof($handle)) { @fclose($handle); throw new Exception('Fehler beim Springen.'); } } lww_log_system_event('Sprung Z ' . $current_row . ' beendet.'); }
+    
     $header_map_key = '_header_map_inventory'; $header_map = get_post_meta($job_id, $header_map_key, true);
-    if ($current_row === 0 || empty($header_map)) {
-        lww_log_system_event('Lese Inventar-Header...'); $header = @fgetcsv($handle);
+    if ($current_row === 0 || empty($header_map) || empty($job_queue[$task_index]['total_rows'])) {
+        lww_log_system_event('Lese Inventar-Header und zähle Zeilen...'); 
+        $header = @fgetcsv($handle);
         if ($header && is_array($header) && count($header) > 0) {
             $header_normalized = array_map('strtolower', array_map('trim', $header));
-            // WICHTIG: Das Mapping MUSS zu deiner BrickOwl CSV passen!
-            $header_map = [
-                'boid' => array_search('boid', $header_normalized),
-                'name' => array_search('name', $header_normalized) ?: array_search('item_name', $header_normalized),
-                'color_name' => array_search('color', $header_normalized) ?: array_search('color_name', $header_normalized),
-                'condition' => array_search('condition', $header_normalized),
-                'quantity' => array_search('qty', $header_normalized) ?: array_search('quantity', $header_normalized),
-                'price' => array_search('price', $header_normalized) ?: array_search('unit_price', $header_normalized),
-                'bulk' => array_search('bulk', $header_normalized),
-                'sale_price' => array_search('sale_price', $header_normalized),
-                'remarks' => array_search('remarks', $header_normalized),
-                'external_id' => array_search('external_id', $header_normalized) ?: array_search('external_id_1', $header_normalized),
-                'location' => array_search('location', $header_normalized),
-                'tier_qty_1' => array_search('tier_qty_1', $header_normalized), 'tier_price_1' => array_search('tier_price_1', $header_normalized),
-                'tier_qty_2' => array_search('tier_qty_2', $header_normalized), 'tier_price_2' => array_search('tier_price_2', $header_normalized),
-                'tier_qty_3' => array_search('tier_qty_3', $header_normalized), 'tier_price_3' => array_search('tier_price_3', $header_normalized),
+            
+            // --- START DER FEHLERBEHEBUNG ---
+            // Robuste Spaltenzuordnung, die den `array_search` `0`-Bug behebt.
+            $possible_maps = [
+                'boid' => ['boid'],
+                'name' => ['name', 'item_name'],
+                'color_name' => ['color_name', 'color'],
+                'condition' => ['condition'],
+                'quantity' => ['quantity', 'qty'],
+                'price' => ['unit_price', 'price'],
+                'bulk' => ['bulk'],
+                'sale_price' => ['sale_price'],
+                'remarks' => ['remarks'],
+                'external_id' => ['external_id', 'external_id_1'],
+                'location' => ['location'],
+                'tier_qty_1' => ['tier_qty_1'], 'tier_price_1' => ['tier_price_1'],
+                'tier_qty_2' => ['tier_qty_2'], 'tier_price_2' => ['tier_price_2'],
+                'tier_qty_3' => ['tier_qty_3'], 'tier_price_3' => ['tier_price_3'],
             ];
+
+            $header_map = [];
+            foreach ($possible_maps as $target_key => $source_keys) {
+                $header_map[$target_key] = false; // Standardwert
+                foreach ($source_keys as $source_key) {
+                    $found_index = array_search($source_key, $header_normalized);
+                    if ($found_index !== false) {
+                        $header_map[$target_key] = $found_index;
+                        break; // Nimm den ersten Treffer
+                    }
+                }
+            }
+            // --- ENDE DER FEHLERBEHEBUNG ---
+
             $required_cols = ['boid','color_name','condition','quantity','price']; $missing_cols = [];
             foreach($required_cols as $req_col){ if(!isset($header_map[$req_col]) || $header_map[$req_col] === false) { $missing_cols[] = $req_col; } }
             if(!empty($missing_cols)){ @fclose($handle); throw new Exception('Inventar-CSV Spalten fehlen: '.implode(', ',$missing_cols)); }
-            update_post_meta($job_id, $header_map_key, $header_map); $current_row++; $job_queue[$task_index]['rows_processed'] = $current_row; update_post_meta($job_id, '_job_queue', $job_queue); lww_log_system_event('Inventar-Header gelesen.');
+            update_post_meta($job_id, $header_map_key, $header_map); $current_row++; 
+
+            // Total rows zählen für Fortschrittsanzeige
+            $total_rows = 1; // Header-Zeile
+            while(fgets($handle) !== false) { $total_rows++; }
+            $job_queue[$task_index]['total_rows'] = $total_rows;
+            update_post_meta($job_id, '_total_items', $total_rows - 1); // Total items for progress bar
+            rewind($handle); // Zurück zum Anfang der Datei
+            fgets($handle); // Header wieder überspringen
+
+            $job_queue[$task_index]['rows_processed'] = $current_row; 
+            update_post_meta($job_id, '_processed_items', 0);
+            update_post_meta($job_id, '_job_queue', $job_queue); 
+            lww_log_system_event('Inventar-Header gelesen, ' . $total_rows . ' Zeilen gezählt.');
         } else { @fclose($handle); throw new Exception('Inventar-Header nicht lesbar.'); }
     }
     if (empty($header_map) || !is_array($header_map)) { @fclose($handle); throw new Exception('Inventar-Header-Map fehlt.'); }
 
-    // --- Handler-Klasse finden (v10.0) ---
+    // --- Handler-Klasse finden (v12.0) ---
     static $handler_cache_inv = [];
-    // WICHTIG: Nutzt den umbenannten Handler
-    $class_name = 'LWW_Import_Inventory_Handler';
+    $class_name = ($job_type === 'inventory_backup_import') ? 'LWW_Import_Inventory_Backup_Handler' : 'LWW_Import_Inventory_Handler';
+
     if (!isset($handler_cache_inv[$class_name])) {
-         if (class_exists($class_name)) { $handler_cache_inv[$class_name] = new $class_name(); }
+         if (class_exists($class_name)) { $handler_cache_inv[$class_name] = new $class_name(); } 
          else { $handler_cache_inv[$class_name] = false; }
     }
     $handler = $handler_cache_inv[$class_name];
     if (!$handler || !($handler instanceof LWW_Import_Handler_Interface)) { throw new Exception(sprintf('KRITISCH: Inventar-Handler (%s) fehlt.', $class_name)); }
 
+    // Rufe start_job() einmalig auf
+    static $inv_start_job_called = [];
+    if (!isset($inv_start_job_called[$job_id])) {
+        $handler->start_job($job_id);
+        $inv_start_job_called[$job_id] = true;
+    }
+
     // --- Batch verarbeiten ---
     $processed_in_this_batch = 0;
+    $total_rows_in_task = $job_queue[$task_index]['total_rows'] ?? 0;
     lww_log_system_event('Starte Inventar Batch mit ' . $class_name . ' (Z '.$current_row.' bis ca. '.($current_row+$batch_size).')');
     while ($processed_in_this_batch < $batch_size && !feof($handle)) {
         @set_time_limit(60);
         $line_number_for_log = $current_row + 1; $data = @fgetcsv($handle);
         if ($data === FALSE || $data === null || (count($data) === 1 && ($data[0] === null || trim($data[0]) === ''))) { if (feof($handle)) { lww_log_system_event('Inventar: EOF in while'); break; } $current_row++; continue; }
+        
+        // Heartbeat
+        if (($processed_in_this_batch > 0) && ($processed_in_this_batch % 100) === 0) {
+            wp_update_post(['ID' => $job_id, 'post_modified' => current_time('mysql'), 'post_modified_gmt' => current_time('mysql', 1)]);
+        }
+
         try {
             $handler->process_row($job_id, $data, $header_map);
         } catch (Exception $e) { lww_log_to_job($job_id, sprintf('FEHLER Inventar Z %d: %s', $line_number_for_log, $e->getMessage())); }
@@ -320,82 +395,532 @@ function lww_process_inventory_job_batch($job_id) {
 
     // --- Status nach dem Batch aktualisieren ---
     $job_queue[$task_index]['rows_processed'] = $current_row;
+    $processed_items = (int) get_post_meta($job_id, '_processed_items', true) + $processed_in_this_batch;
+    update_post_meta($job_id, '_processed_items', $processed_items);
+
     if (feof($handle)) {
         lww_log_system_event('Inventar: EOF erreicht.'); @fclose($handle); @unlink($file_path);
-        $job_queue[$task_index]['status'] = 'complete'; $job_queue[$task_index]['total_rows'] = max(0, $current_row - 1);
+        $job_queue[$task_index]['status'] = 'complete'; 
+        $final_processed_rows = max(0, $current_row - 1);
+        $job_queue[$task_index]['total_rows'] = $final_processed_rows;
         wp_update_post(['ID' => $job_id, 'post_status' => 'lww_complete']);
-        lww_log_to_job($job_id, sprintf('Inventar-Import-Job abgeschlossen (%d Zeilen).', $job_queue[$task_index]['total_rows']));
+        lww_log_to_job($job_id, sprintf('Inventar-Import-Job abgeschlossen (%d Zeilen).', $final_processed_rows));
+        // Cache für Inventar-Statistiken löschen
+        delete_transient('lww_inventory_stats');
+        if (get_option('lww_current_running_job_id') == $job_id) delete_option('lww_current_running_job_id');
     } else {
-        @fclose($handle); lww_log_to_job($job_id, sprintf('Inventar-Import: Batch beendet, %d Zeilen verarbeitet.', max(0, $current_row - 1)));
+        @fclose($handle); 
+        $log_message = sprintf('Inventar-Import: Batch beendet, %s / %s Zeilen verarbeitet.', number_format_i18n(max(0, $current_row - 1)), number_format_i18n($total_rows_in_task - 1));
+        lww_log_to_job($job_id, $log_message);
     }
     update_post_meta($job_id, '_job_queue', $job_queue);
     lww_log_system_event('--- Ende lww_process_inventory_job_batch ---');
 }
 
-
-// --- HILFSFUNKTIONEN ---
-
 /**
- * Plant den Cron Job.
+ * Verarbeitet einen Batch eines Nachfrageanalyse-Jobs.
  */
-function lww_start_cron_job() {
-    $hook = 'lww_main_batch_hook';
-    $interval = get_option('lww_cron_interval', 'lww_every_minute');
-    $schedules = wp_get_schedules();
-    if (!isset($schedules[$interval])) { lww_log_system_event('FEHLER: Ungültiges Cron-Intervall "' . $interval . '". Nutze "lww_every_minute".'); $interval = 'lww_every_minute'; }
-    if (!wp_next_scheduled($hook)) {
-        $scheduled = wp_schedule_event(time() + 10, $interval, $hook);
-        if ($scheduled === false) { lww_log_system_event('FEHLER: Konnte Cron "' . $hook . '" nicht planen!'); }
-        else { lww_log_system_event('Cron "' . $hook . '" geplant (Intervall: ' . $interval . ').'); }
-    } else { lww_log_system_event('Cron "' . $hook . '" ist bereits geplant.'); }
-}
+function lww_process_demand_analysis_batch($job_id) {
+    lww_log_system_event('--- Start lww_process_demand_analysis_batch (Job ' . $job_id . ') ---');
+    
+    $item_ids = get_post_meta($job_id, '_item_ids_to_process', true);
+    $total_items = (int) get_post_meta($job_id, '_total_items', true);
+    $processed_count = (int) get_post_meta($job_id, '_processed_items', true);
 
-/**
- * Entfernt den Cron Job.
- */
-function lww_stop_cron_job() {
-    $hook = 'lww_main_batch_hook';
-    $timestamp = wp_next_scheduled($hook);
-    if ($timestamp) {
-        $unscheduled = wp_unschedule_event($timestamp, $hook);
-        if ($unscheduled === false) { lww_log_system_event('FEHLER: Konnte Cron "' . $hook . '" nicht stoppen!'); }
-        else { lww_log_system_event('Cron "' . $hook . '" gestoppt.'); }
+    if (!is_array($item_ids) || empty($item_ids)) {
+        lww_log_to_job($job_id, 'Keine Artikel-IDs für die Analyse gefunden. Job wird abgeschlossen.');
+        wp_update_post(['ID' => $job_id, 'post_status' => 'lww_complete']);
+        if (get_option('lww_current_running_job_id') == $job_id) delete_option('lww_current_running_job_id');
+        return;
     }
-    wp_clear_scheduled_hook($hook);
-}
 
-/**
- * Markiert einen Job als fehlgeschlagen.
- */
-function lww_fail_job($job_id, $message) {
-    if (get_post_status($job_id) !== 'lww_failed') {
-        wp_update_post(['ID' => $job_id, 'post_status' => 'lww_failed']);
-        lww_log_to_job($job_id, 'FEHLER: ' . $message);
-        if (get_option('lww_current_running_job_id') == $job_id) { delete_option('lww_current_running_job_id'); }
-        lww_log_system_event('Job ' . $job_id . ' fehlgeschlagen.');
+    // Batch-Größe für KI ist klein, da Anfragen langsam sein können
+    $batch_size = apply_filters('lww_demand_analysis_batch_size', 10);
+    $items_in_this_batch = array_slice($item_ids, $processed_count, $batch_size);
+
+    if (empty($items_in_this_batch)) {
+        // Alle Artikel wurden verarbeitet
+        lww_log_to_job($job_id, sprintf('Analyse für alle %d Artikel abgeschlossen.', $total_items));
+        wp_update_post(['ID' => $job_id, 'post_status' => 'lww_complete']);
+        if (get_option('lww_current_running_job_id') == $job_id) delete_option('lww_current_running_job_id');
+        return;
     }
-}
 
-/**
- * Fügt eine Nachricht zum Job-Log hinzu.
- */
-function lww_log_to_job($job_id, $message) {
-    if (empty($job_id)) return;
-    $log = get_post_meta($job_id, '_job_log', true);
-    if (!is_array($log)) $log = [];
-    $log_entry = sprintf('[%s] %s', wp_date('H:i:s'), $message); $log[] = $log_entry;
-    $max_log_entries = apply_filters('lww_max_job_log_entries', 200);
-    if (count($log) > $max_log_entries) { $log = array_slice($log, -$max_log_entries); }
-    update_post_meta($job_id, '_job_log', $log);
-}
+    $processed_in_this_batch = 0;
+    foreach ($items_in_this_batch as $item_id) {
+        @set_time_limit(60);
+        
+        // Heartbeat für KI-Jobs (häufiger)
+        if (($processed_in_this_batch > 0) && ($processed_in_this_batch % 5) === 0) {
+            wp_update_post(['ID' => $job_id, 'post_modified' => current_time('mysql'), 'post_modified_gmt' => current_time('mysql', 1)]);
+        }
 
-/**
- * Schreibt in das PHP Error Log.
- */
-function lww_log_system_event($message) {
-    if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG === true) {
-        error_log('[LWW System] ' . $message);
+        $result = lww_calculate_demand_score_for_item($item_id);
+        if (is_wp_error($result)) {
+            lww_log_to_job($job_id, sprintf('FEHLER bei Artikel %d: %s', $item_id, $result->get_error_message()));
+        }
+        $processed_count++;
+        $processed_in_this_batch++;
     }
+
+    // Fortschritt speichern
+    update_post_meta($job_id, '_processed_items', $processed_count);
+    lww_log_to_job($job_id, sprintf('Batch beendet. %d von %d Artikeln analysiert.', $processed_count, $total_items));
+    
+    lww_log_system_event(sprintf('Analyse-Batch beendet. %d/%d verarbeitet.', $processed_count, $total_items));
+}
+
+/**
+ * Verarbeitet einen Batch eines Beschreibungs-Generierungs-Jobs.
+ */
+function lww_process_description_generation_batch($job_id) {
+    lww_log_system_event('--- Start lww_process_description_generation_batch (Job ' . $job_id . ') ---');
+
+    $item_ids = get_post_meta($job_id, '_item_ids_to_process', true);
+    $total_items = (int) get_post_meta($job_id, '_total_items', true);
+    $processed_count = (int) get_post_meta($job_id, '_processed_items', true);
+
+    if (!is_array($item_ids) || empty($item_ids)) {
+        lww_log_to_job($job_id, 'Keine Eintrags-IDs für die Beschreibungserstellung gefunden. Job wird abgeschlossen.');
+        wp_update_post(['ID' => $job_id, 'post_status' => 'lww_complete']);
+        if (get_option('lww_current_running_job_id') == $job_id) delete_option('lww_current_running_job_id');
+        return;
+    }
+
+    $batch_size = apply_filters('lww_description_generation_batch_size', 5); // Kleinere Batch-Größe für Texterstellung
+    $items_in_this_batch = array_slice($item_ids, $processed_count, $batch_size);
+
+    if (empty($items_in_this_batch)) {
+        lww_log_to_job($job_id, sprintf('Beschreibungserstellung für alle %d Einträge abgeschlossen.', $total_items));
+        wp_update_post(['ID' => $job_id, 'post_status' => 'lww_complete']);
+        if (get_option('lww_current_running_job_id') == $job_id) delete_option('lww_current_running_job_id');
+        return;
+    }
+
+    $processed_in_this_batch = 0;
+    foreach ($items_in_this_batch as $post_id) {
+        @set_time_limit(120);
+
+        // Heartbeat
+        if (($processed_in_this_batch > 0) && ($processed_in_this_batch % 2) === 0) {
+            wp_update_post(['ID' => $job_id, 'post_modified' => current_time('mysql'), 'post_modified_gmt' => current_time('mysql', 1)]);
+        }
+
+        $post_type = get_post_type($post_id);
+        $result = null;
+
+        switch ($post_type) {
+            case 'lww_set':
+                $result = function_exists('lww_generate_set_description') ? lww_generate_set_description($post_id) : new WP_Error('function_missing', 'lww_generate_set_description nicht gefunden.');
+                break;
+            case 'lww_minifig':
+                $result = function_exists('lww_generate_minifig_description') ? lww_generate_minifig_description($post_id) : new WP_Error('function_missing', 'lww_generate_minifig_description nicht gefunden.');
+                break;
+            case 'lww_part':
+                $result = function_exists('lww_generate_part_short_description') ? lww_generate_part_short_description($post_id) : new WP_Error('function_missing', 'lww_generate_part_short_description nicht gefunden.');
+                break;
+        }
+
+        if (is_wp_error($result)) {
+            lww_log_to_job($job_id, sprintf('FEHLER bei Eintrag %d (%s): %s', $post_id, $post_type, $result->get_error_message()));
+        }
+        $processed_count++;
+        $processed_in_this_batch++;
+    }
+
+    update_post_meta($job_id, '_processed_items', $processed_count);
+    lww_log_to_job($job_id, sprintf('Batch beendet. %d von %d Beschreibungen erstellt.', $processed_count, $total_items));
+    lww_log_system_event(sprintf('Beschreibungs-Batch beendet. %d/%d verarbeitet.', $processed_count, $total_items));
+}
+
+/**
+ * Verarbeitet einen Batch eines Lagerort-Synchronisations-Jobs.
+ */
+function lww_process_location_sync_batch($job_id) {
+    lww_log_system_event('--- Start lww_process_location_sync_batch (Job ' . $job_id . ') ---');
+
+    $item_ids = get_post_meta($job_id, '_item_ids_to_process', true);
+    $total_items = (int) get_post_meta($job_id, '_total_items', true);
+    $processed_count = (int) get_post_meta($job_id, '_processed_items', true);
+
+    if (!is_array($item_ids) || empty($item_ids)) {
+        lww_log_to_job($job_id, 'Keine Artikel-IDs für die Synchronisation gefunden. Job wird abgeschlossen.');
+        wp_update_post(['ID' => $job_id, 'post_status' => 'lww_complete']);
+        if (get_option('lww_current_running_job_id') == $job_id) delete_option('lww_current_running_job_id');
+        return;
+    }
+
+    $batch_size = apply_filters('lww_location_sync_batch_size', 200);
+    $items_in_this_batch = array_slice($item_ids, $processed_count, $batch_size);
+
+    if (empty($items_in_this_batch)) {
+        lww_log_to_job($job_id, sprintf('Lagerort-Synchronisation für alle %d Artikel abgeschlossen.', $total_items));
+        wp_update_post(['ID' => $job_id, 'post_status' => 'lww_complete']);
+        if (get_option('lww_current_running_job_id') == $job_id) delete_option('lww_current_running_job_id');
+        return;
+    }
+
+    $processed_in_this_batch = 0;
+    foreach ($items_in_this_batch as $item_id) {
+        @set_time_limit(60);
+
+        if (($processed_in_this_batch > 0) && ($processed_in_this_batch % 100) === 0) {
+            wp_update_post(['ID' => $job_id, 'post_modified' => current_time('mysql'), 'post_modified_gmt' => current_time('mysql', 1)]);
+        }
+
+        $remarks = get_post_meta($item_id, '_remarks', true);
+        if (function_exists('lww_update_locations_from_string')) {
+            lww_update_locations_from_string($item_id, $remarks);
+        } else {
+            lww_log_to_job($job_id, sprintf('FEHLER bei Artikel %d: Hilfsfunktion lww_update_locations_from_string() nicht gefunden.', $item_id));
+        }
+        $processed_count++;
+        $processed_in_this_batch++;
+    }
+
+    update_post_meta($job_id, '_processed_items', $processed_count);
+    lww_log_to_job($job_id, sprintf('Batch beendet. %d von %d Artikeln synchronisiert.', $processed_count, $total_items));
+    lww_log_system_event(sprintf('Lagerort-Sync-Batch beendet. %d/%d verarbeitet.', $processed_count, $total_items));
+}
+
+/**
+ * Verarbeitet einen Batch eines eBay Synchronisations-Jobs. (NEU & KORRIGIERT)
+ */
+function lww_process_ebay_sync_batch($job_id) {
+    lww_log_system_event('--- Start lww_process_ebay_sync_batch (Job ' . $job_id . ') ---');
+
+    $listing_ids = get_post_meta($job_id, '_item_ids_to_process', true);
+    $total_items = (int) get_post_meta($job_id, '_total_items', true);
+    $processed_count = (int) get_post_meta($job_id, '_processed_items', true);
+
+    if (!is_array($listing_ids) || empty($listing_ids)) {
+        lww_log_to_job($job_id, 'Keine eBay Angebots-IDs für die Synchronisation gefunden. Job wird abgeschlossen.');
+        wp_update_post(['ID' => $job_id, 'post_status' => 'lww_complete']);
+        if (get_option('lww_current_running_job_id') == $job_id) delete_option('lww_current_running_job_id');
+        return;
+    }
+
+    $batch_size = apply_filters('lww_ebay_sync_batch_size', 10); // API-Calls sind langsam
+    $items_in_this_batch = array_slice($listing_ids, $processed_count, $batch_size);
+
+    if (empty($items_in_this_batch)) {
+        lww_log_to_job($job_id, sprintf('eBay-Synchronisation für alle %d Angebote abgeschlossen.', $total_items));
+        wp_update_post(['ID' => $job_id, 'post_status' => 'lww_complete']);
+        if (get_option('lww_current_running_job_id') == $job_id) delete_option('lww_current_running_job_id');
+        return;
+    }
+
+    $api_settings = get_option('lww_api_settings');
+    $ebay_api = new LWW_eBay_API($api_settings);
+    $handler = new LWW_Import_Handler_Base(); // Um Hilfsfunktionen zu nutzen
+
+    $processed_in_this_batch = 0;
+    foreach ($items_in_this_batch as $listing_id) {
+        @set_time_limit(120);
+
+        if (($processed_in_this_batch > 0) && ($processed_in_this_batch % 5) === 0) {
+            wp_update_post(['ID' => $job_id, 'post_modified' => current_time('mysql'), 'post_modified_gmt' => current_time('mysql', 1)]);
+        }
+
+        $details = $ebay_api->get_item_details($listing_id);
+
+        if (is_wp_error($details)) {
+            lww_log_to_job($job_id, sprintf('FEHLER bei Abruf von eBay Angebot %s: %s', $listing_id, $details->get_error_message()));
+            $processed_count++;
+            $processed_in_this_batch++;
+            continue;
+        }
+        
+        $catalog_sku = $details['sku'] ?? null;
+        if (empty($catalog_sku)) {
+            lww_log_to_job($job_id, sprintf('WARNUNG: eBay Angebot %s übersprungen, da Haupt-SKU fehlt.', $listing_id));
+            $processed_count++;
+            $processed_in_this_batch++;
+            continue;
+        }
+
+        // Finde das zugehörige Katalog-Item (Set oder Minifig) anhand der Haupt-SKU
+        $catalog_post_id = $handler->find_set_by_num($catalog_sku);
+        $catalog_post_type = 'lww_set';
+        if (empty($catalog_post_id)) {
+            $catalog_post_id = $handler->find_minifig_by_num($catalog_sku);
+            $catalog_post_type = 'lww_minifig';
+        }
+
+        if (empty($catalog_post_id)) {
+            lww_log_unresolved_reference($job_id, 'ebay_sync', 'Catalog SKU', $catalog_sku, 0);
+            $processed_count++;
+            $processed_in_this_batch++;
+            continue;
+        }
+
+        $items_to_process = [];
+        if (!empty($details['variations'])) {
+            $items_to_process = $details['variations'];
+        } else {
+            $items_to_process[] = $details;
+        }
+
+        foreach ($items_to_process as $item_data) {
+            $variation_sku = $item_data['sku'] ?? $catalog_sku;
+            $unique_meta_key = '_lww_inventory_uid';
+            $unique_meta_value = 'ebay|' . $listing_id . '|' . $variation_sku;
+
+            $post_id = $handler->find_post_by_meta('lww_inventory_item', $unique_meta_key, $unique_meta_value);
+
+            $post_title = get_the_title($catalog_post_id);
+            if (!empty($item_data['variation_name'])) {
+                $post_title .= ' - ' . $item_data['variation_name'];
+            }
+
+            $post_data = [
+                'post_title'   => $post_title,
+                'post_status'  => 'publish',
+                'post_type'    => 'lww_inventory_item',
+            ];
+
+            if ($post_id > 0) {
+                $post_data['ID'] = $post_id;
+                wp_update_post($post_data);
+            } else {
+                $post_id = wp_insert_post($post_data, true);
+                if (is_wp_error($post_id)) {
+                    lww_log_to_job($job_id, sprintf('FEHLER (eBay-Import): Konnte "%s" nicht erstellen: %s', $post_title, $post_id->get_error_message()));
+                    continue;
+                }
+                lww_log_to_job($job_id, sprintf('INFO (eBay-Import): "%s" (ID: %d) NEU erstellt.', $post_title, $post_id));
+            }
+
+            // Meta-Daten speichern
+            update_post_meta($post_id, $unique_meta_key, $unique_meta_value);
+            if ($catalog_post_type === 'lww_set') {
+                update_post_meta($post_id, '_lww_set_id', $catalog_post_id);
+                delete_post_meta($post_id, '_lww_minifig_id');
+                delete_post_meta($post_id, '_lww_part_id');
+            } else {
+                update_post_meta($post_id, '_lww_minifig_id', $catalog_post_id);
+                delete_post_meta($post_id, '_lww_set_id');
+                delete_post_meta($post_id, '_lww_part_id');
+            }
+            update_post_meta($post_id, '_quantity', intval($item_data['quantity']));
+            update_post_meta($post_id, '_price', floatval($item_data['price']));
+            update_post_meta($post_id, '_condition', strtolower($item_data['condition']) === 'new' ? 'new' : 'used');
+            update_post_meta($post_id, '_lww_ebay_listing_id', $listing_id);
+            update_post_meta($post_id, '_lww_ebay_variation_sku', $variation_sku);
+        }
+
+        $processed_count++;
+        $processed_in_this_batch++;
+    }
+
+    update_post_meta($job_id, '_processed_items', $processed_count);
+    lww_log_to_job($job_id, sprintf('Batch beendet. %d von %d eBay-Angeboten verarbeitet.', $processed_count, $total_items));
+    lww_log_system_event(sprintf('eBay-Sync-Batch beendet. %d/%d verarbeitet.', $processed_count, $total_items));
+}
+
+/**
+ * Verarbeitet einen Batch eines BrickOwl Preis-Synchronisations-Jobs.
+ */
+function lww_process_brickowl_sync_batch($job_id) {
+    lww_log_system_event('--- Start lww_process_brickowl_sync_batch (Job ' . $job_id . ') ---');
+
+    $item_ids = get_post_meta($job_id, '_item_ids_to_process', true);
+    $total_items = (int) get_post_meta($job_id, '_total_items', true);
+    $processed_count = (int) get_post_meta($job_id, '_processed_items', true);
+
+    if (!is_array($item_ids) || empty($item_ids)) {
+        lww_log_to_job($job_id, 'Keine Artikel-IDs für die Synchronisation gefunden. Job wird abgeschlossen.');
+        wp_update_post(['ID' => $job_id, 'post_status' => 'lww_complete']);
+        if (get_option('lww_current_running_job_id') == $job_id) delete_option('lww_current_running_job_id');
+        return;
+    }
+
+    $batch_size = apply_filters('lww_brickowl_sync_batch_size', 15);
+    $items_in_this_batch = array_slice($item_ids, $processed_count, $batch_size);
+
+    if (empty($items_in_this_batch)) {
+        lww_log_to_job($job_id, sprintf('BrickOwl Preis-Synchronisation für alle %d Artikel abgeschlossen.', $total_items));
+        wp_update_post(['ID' => $job_id, 'post_status' => 'lww_complete']);
+        if (get_option('lww_current_running_job_id') == $job_id) delete_option('lww_current_running_job_id');
+        return;
+    }
+
+    $api_settings = get_option('lww_api_settings');
+    $api_key = $api_settings['brickowl_api_key'] ?? '';
+    if (empty($api_key)) {
+        lww_fail_job($job_id, __('BrickOwl API-Schlüssel nicht konfiguriert.', 'lego-wawi'));
+        return;
+    }
+    $brickowl_api = new LWW_BrickOwl_API($api_key);
+
+    $processed_in_this_batch = 0;
+    foreach ($items_in_this_batch as $item_id) {
+        @set_time_limit(60);
+
+        if (($processed_in_this_batch > 0) && ($processed_in_this_batch % 5) === 0) {
+            wp_update_post(['ID' => $job_id, 'post_modified' => current_time('mysql'), 'post_modified_gmt' => current_time('mysql', 1)]);
+        }
+
+        $boid = get_post_meta($item_id, '_boid', true);
+
+        if (empty($boid)) {
+            lww_log_to_job($job_id, sprintf('WARNUNG bei Artikel %d: Keine BOID gefunden, wird übersprungen.', $item_id));
+            $processed_count++;
+            $processed_in_this_batch++;
+            continue;
+        }
+
+        $new_price = $brickowl_api->get_item_price($boid);
+
+        if (is_wp_error($new_price)) {
+            lww_log_to_job($job_id, sprintf('FEHLER bei Artikel %d (BOID: %s): %s', $item_id, $boid, $new_price->get_error_message()));
+        } else {
+            $old_price = (float) get_post_meta($item_id, '_price', true);
+            if (abs($new_price - $old_price) > 0.0001) { 
+                update_post_meta($item_id, '_price', $new_price);
+                $history = get_post_meta($item_id, '_lww_price_history', true);
+                if (!is_array($history)) $history = [];
+                $history[] = ['timestamp' => time(), 'price' => $new_price, 'source' => 'brickowl_sync_job'];
+                if (count($history) > 20) $history = array_slice($history, -20);
+                update_post_meta($item_id, '_lww_price_history', $history);
+            }
+        }
+        $processed_count++;
+        $processed_in_this_batch++;
+    }
+
+    update_post_meta($job_id, '_processed_items', $processed_count);
+    lww_log_to_job($job_id, sprintf('Batch beendet. %d von %d Artikeln synchronisiert.', $processed_count, $total_items));
+    lww_log_system_event(sprintf('BrickOwl-Sync-Batch beendet. %d/%d verarbeitet.', $processed_count, $total_items));
+}
+
+/**
+ * Verarbeitet einen Batch eines Datenbereinigungs-Jobs.
+ */
+function lww_process_data_purge_batch($job_id) {
+    $step = (int) get_post_meta($job_id, '_purge_step', true);
+    $batch_size = 500;
+
+    $purge_steps = [
+        ['type' => 'cpt', 'name' => 'lww_inventory_item', 'label' => 'Inventar-Einträge'],
+        ['type' => 'cpt', 'name' => 'lww_part', 'label' => 'Teile'],
+        ['type' => 'cpt', 'name' => 'lww_set', 'label' => 'Sets'],
+        ['type' => 'cpt', 'name' => 'lww_minifig', 'label' => 'Minifiguren'],
+        ['type' => 'cpt', 'name' => 'lww_color', 'label' => 'Farben'],
+        ['type' => 'cpt', 'name' => 'lww_api_log', 'label' => 'API-Logs'],
+        ['type' => 'cpt', 'name' => 'lww_job', 'label' => 'Jobs'],
+        ['type' => 'tax', 'name' => 'lww_inventory_location', 'label' => 'Lagerorte'],
+        ['type' => 'tax', 'name' => 'lww_part_category', 'label' => 'Teile-Kategorien'],
+        ['type' => 'tax', 'name' => 'lww_theme', 'label' => 'Themen'],
+        ['type' => 'options', 'label' => 'Plugin-Optionen'],
+    ];
+
+    if ($step >= count($purge_steps)) {
+        lww_log_to_job($job_id, 'Datenbereinigung erfolgreich abgeschlossen.');
+        wp_update_post(['ID' => $job_id, 'post_status' => 'lww_complete']);
+        lww_log_system_event('Job ' . $job_id . ' (data_purge) abgeschlossen.');
+        if (get_option('lww_current_running_job_id') == $job_id) delete_option('lww_current_running_job_id');
+        return;
+    }
+
+    $current_step = $purge_steps[$step];
+    $deleted_count = 0;
+    lww_log_to_job($job_id, sprintf('Starte Schritt %d: Lösche %s...', $step + 1, $current_step['label']));
+
+    if ($current_step['type'] === 'cpt') {
+        $query_args = [
+            'post_type' => $current_step['name'],
+            'posts_per_page' => $batch_size,
+            'post_status' => 'any',
+            'fields' => 'ids',
+        ];
+        // Den Bereinigungs-Job selbst nicht löschen
+        if ($current_step['name'] === 'lww_job') {
+            $query_args['post__not_in'] = [$job_id];
+        }
+        $items_to_delete = get_posts($query_args);
+        if (!empty($items_to_delete)) {
+            foreach ($items_to_delete as $post_id_to_delete) {
+                wp_delete_post($post_id_to_delete, true);
+                $deleted_count++;
+            }
+            lww_log_to_job($job_id, sprintf('%d %s gelöscht. Suche nach weiteren...', $deleted_count, $current_step['label']));
+            // Im selben Schritt bleiben, um den nächsten Batch zu löschen
+            return;
+        }
+    } elseif ($current_step['type'] === 'tax') {
+        $terms_to_delete = get_terms(['taxonomy' => $current_step['name'], 'number' => $batch_size, 'hide_empty' => false, 'fields' => 'ids']);
+        if (!empty($terms_to_delete) && !is_wp_error($terms_to_delete)) {
+            foreach ($terms_to_delete as $term_id_to_delete) {
+                wp_delete_term($term_id_to_delete, $current_step['name']);
+                $deleted_count++;
+            }
+            lww_log_to_job($job_id, sprintf('%d %s gelöscht. Suche nach weiteren...', $deleted_count, $current_step['label']));
+            // Im selben Schritt bleiben
+            return;
+        }
+    } elseif ($current_step['type'] === 'options') {
+        delete_option('lww_catalog_counts');
+        lww_log_to_job($job_id, 'Plugin-Optionen zurückgesetzt.');
+    }
+
+    // Wenn hier angekommen, ist der Schritt abgeschlossen -> zum nächsten Schritt
+    lww_log_to_job($job_id, sprintf('Schritt "%s" abgeschlossen.', $current_step['label']));
+    update_post_meta($job_id, '_purge_step', $step + 1);
+}
+
+/**
+ * Verarbeitet einen Batch eines Daten-Validierungs-Jobs.
+ */
+function lww_process_data_validation_batch($job_id) {
+    lww_log_system_event('--- Start lww_process_data_validation_batch (Job ' . $job_id . ') ---');
+    $processed_page = (int) get_post_meta($job_id, '_processed_page', true);
+    $current_page = $processed_page + 1;
+    $batch_size = apply_filters('lww_data_validation_batch_size', 200);
+
+    $query = new WP_Query([
+        'post_type'      => 'lww_inventory_item',
+        'post_status'    => 'publish',
+        'posts_per_page' => $batch_size,
+        'paged'          => $current_page,
+        'fields'         => 'ids',
+        'orderby'        => 'ID', // Konsistente Reihenfolge
+        'order'          => 'ASC',
+    ]);
+
+    if (!$query->have_posts()) {
+        lww_log_to_job($job_id, 'Daten-Validierung für das gesamte Inventar abgeschlossen.');
+        wp_update_post(['ID' => $job_id, 'post_status' => 'lww_complete']);
+        delete_post_meta($job_id, '_processed_page');
+        if (get_option('lww_current_running_job_id') == $job_id) delete_option('lww_current_running_job_id');
+        return;
+    }
+
+    $found_issues = 0;
+    foreach ($query->posts as $item_id) {
+        $part_id = get_post_meta($item_id, '_lww_part_id', true);
+        $set_id = get_post_meta($item_id, '_lww_set_id', true);
+        $minifig_id = get_post_meta($item_id, '_lww_minifig_id', true);
+
+        if (empty($part_id) && empty($set_id) && empty($minifig_id)) {
+            lww_log_unresolved_reference(
+                $job_id,
+                'Daten-Validierung',
+                'Fehlende Katalog-Verknüpfung',
+                'Inventar-Item ID: ' . $item_id,
+                0 // Keine Zeilennummer für diese Art von Prüfung
+            );
+            $found_issues++;
+        }
+    }
+    
+    $total_processed = (($current_page - 1) * $batch_size) + $query->post_count;
+    update_post_meta($job_id, '_processed_page', $current_page);
+    update_post_meta($job_id, '_processed_items', $total_processed); // Für die Fortschrittsanzeige
+    
+    $log_message = sprintf('Batch %d abgeschlossen. Bisher %d Artikel geprüft. %d neue Probleme gefunden.', $current_page, $total_processed, $found_issues);
+    lww_log_to_job($job_id, $log_message);
+    lww_log_system_event('Daten-Validierungs-Batch beendet. ' . $log_message);
 }
 
 /**
@@ -428,6 +953,9 @@ function lww_skip_or_complete_job($job_id, $job_queue, $current_task_index, $rea
         wp_update_post(['ID' => $job_id, 'post_status' => 'lww_complete']);
         lww_log_to_job($job_id, 'Katalog-Import-Job abgeschlossen.');
         lww_log_system_event('Job ' . $job_id . ' abgeschlossen.');
+        if (get_option('lww_current_running_job_id') == $job_id) {
+            delete_option('lww_current_running_job_id');
+        }
     }
 }
 ?>

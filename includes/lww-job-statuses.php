@@ -1,6 +1,6 @@
 <?php
 /**
- * Modul: Job Status Registrierung (v9.0 - Unverändert von v8.3)
+ * Modul: Job Status Registrierung (v12.0)
  * Registriert die Custom Post Status für 'lww_job'.
  */
 if (!defined('ABSPATH')) exit;
@@ -24,6 +24,14 @@ function lww_register_job_post_statuses() {
         'show_in_admin_all_list'    => true,
         'show_in_admin_status_list' => true,
         'label_count'               => _n_noop('Laufend <span class="count">(%s)</span>', 'Laufend <span class="count">(%s)</span>', 'lego-wawi'),
+    ));
+    register_post_status('lww_paused', array(
+        'label'                     => _x('Pausiert', 'post status', 'lego-wawi'),
+        'public'                    => false,
+        'exclude_from_search'       => true,
+        'show_in_admin_all_list'    => true,
+        'show_in_admin_status_list' => true,
+        'label_count'               => _n_noop('Pausiert <span class="count">(%s)</span>', 'Pausiert <span class="count">(%s)</span>', 'lego-wawi'),
     ));
      register_post_status('lww_complete', array(
         'label'                     => _x('Abgeschlossen', 'post status', 'lego-wawi'),

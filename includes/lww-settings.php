@@ -1,6 +1,6 @@
 <?php
 /**
- * Modul: API-Einstellungen & Performance (v9.5)
+ * Modul: API-Einstellungen & Performance (v13.0)
  * Registriert die Einstellungsfelder für API-Schlüssel und Import-Performance.
  */
 
@@ -13,6 +13,8 @@ if (!defined('ABSPATH')) {
  */
 function lww_register_settings() {
 
+    $settings_page_slug = 'lww_settings_ui';
+
     // === 1. API-Schlüssel Sektion ===
     
     register_setting(
@@ -24,9 +26,9 @@ function lww_register_settings() {
         'lww_api_section', // ID
         __('API-Schlüssel Konfiguration', 'lego-wawi'), // Titel
         function () {
-            echo '<p>' . __('Trage hier die API-Schlüssel für die Marktplätze ein.', 'lego-wawi') . '</p>';
+            echo '<p>' . __('Trage hier die API-Schlüssel für die Marktplätze und KI-Dienste ein. Detaillierte Anleitungen findest du unter jedem Feld.', 'lego-wawi') . '</p>';
         },
-        LWW_PLUGIN_SLUG // Slug der Seite
+        $settings_page_slug // Slug der Seite
     );
 
     // API-Felder
@@ -37,9 +39,12 @@ function lww_register_settings() {
         'bricklink_token_value' => __('BrickLink Token Value', 'lego-wawi'),
         'bricklink_token_secret' => __('BrickLink Token Secret', 'lego-wawi'),
         'rebrickable_api_key' => __('Rebrickable API Key', 'lego-wawi'),
-        // Füge hier bei Bedarf weitere API-Keys hinzu
-        // 'ebay_api_key' => __('eBay API Key (Zukunft)', 'lego-wawi'),
-        // 'openai_api_key' => __('OpenAI API Key (für KI-Anreicherung)', 'lego-wawi'),
+        'openai_api_key' => __('OpenAI API Key', 'lego-wawi'),
+        'gemini_api_key' => __('Google Gemini API Key', 'lego-wawi'),
+        'ebay_app_id' => __('eBay App ID', 'lego-wawi'), // Neu
+        'ebay_dev_id' => __('eBay Dev ID', 'lego-wawi'), // Neu
+        'ebay_cert_id' => __('eBay Cert ID', 'lego-wawi'), // Neu
+        'ebay_auth_token' => __('eBay Auth Token', 'lego-wawi'), // Neu
     ];
 
     foreach ($api_keys as $key => $label) {
@@ -47,13 +52,33 @@ function lww_register_settings() {
             $key, // ID des Feldes (z.B. 'brickowl_api_key')
             $label, // Angezeigter Label
             'lww_settings_field_password_callback', // Callback-Funktion zum Rendern
-            LWW_PLUGIN_SLUG, // Slug der Seite
+            $settings_page_slug, // Slug der Seite
             'lww_api_section', // ID der Section
             ['key' => $key] // Argumente für den Callback (der Key im Options-Array)
         );
     }
+
+    // === 2. KI-Anbieter Sektion ===
+    register_setting('lww_settings_group', 'lww_ai_provider', ['type' => 'string', 'sanitize_callback' => 'sanitize_key', 'default' => 'openai']);
+
+    add_settings_section(
+        'lww_ai_provider_section',
+        __('KI-Konfiguration', 'lego-wawi'),
+        function () {
+            echo '<p>' . __('Wähle den KI-Anbieter, der für die Datenanreicherung (z.B. Nachfrageanalyse) verwendet werden soll.', 'lego-wawi') . '</p>';
+        },
+        $settings_page_slug
+    );
+
+    add_settings_field(
+        'lww_ai_provider',
+        __('Bevorzugter KI-Anbieter', 'lego-wawi'),
+        'lww_settings_field_ai_provider_select_callback',
+        $settings_page_slug,
+        'lww_ai_provider_section'
+    );
     
-    // === 2. Performance Sektion ===
+    // === 3. Performance Sektion ===
     
     // Registriere jede Performance-Option einzeln (einfacher zu verwalten)
     register_setting('lww_settings_group', 'lww_cron_interval', ['type' => 'string', 'sanitize_callback' => 'sanitize_key', 'default' => 'lww_every_minute']);
@@ -66,7 +91,7 @@ function lww_register_settings() {
         function () {
             echo '<p>' . __('Steuere hier die Server-Auslastung durch die Import-Prozesse.', 'lego-wawi') . '</p>';
         },
-        LWW_PLUGIN_SLUG // Slug der Seite
+        $settings_page_slug // Slug der Seite
     );
     
     // Feld für Cron-Intervall
@@ -74,7 +99,7 @@ function lww_register_settings() {
         'lww_cron_interval',
         __('Cron-Job Intervall', 'lego-wawi'),
         'lww_settings_field_cron_select_callback', // Neue Callback-Funktion
-        LWW_PLUGIN_SLUG,
+        $settings_page_slug,
         'lww_performance_section'
     );
     
@@ -83,7 +108,7 @@ function lww_register_settings() {
         'lww_catalog_batch_size',
         __('Katalog Batch-Größe', 'lego-wawi'),
         'lww_settings_field_number_callback', // Neue Callback-Funktion
-        LWW_PLUGIN_SLUG,
+        $settings_page_slug,
         'lww_performance_section',
         [
             'key' => 'lww_catalog_batch_size', // Name der Option
@@ -97,7 +122,7 @@ function lww_register_settings() {
         'lww_inventory_batch_size',
         __('Inventar Batch-Größe', 'lego-wawi'),
         'lww_settings_field_number_callback', // Wiederverwendete Callback-Funktion
-        LWW_PLUGIN_SLUG,
+        $settings_page_slug,
         'lww_performance_section',
         [
             'key' => 'lww_inventory_batch_size', // Name der Option
@@ -113,19 +138,84 @@ add_action('admin_init', 'lww_register_settings');
  * Callback für API-Schlüssel (Passwort-Felder).
  */
 function lww_settings_field_password_callback($args) {
-    // Hole das Array mit allen API-Schlüsseln
     $options = get_option('lww_api_settings');
     $key = $args['key'];
-    // Hole den Wert für diesen spezifischen Schlüssel oder setze einen leeren String
     $value = isset($options[$key]) ? esc_attr($options[$key]) : '';
-    // Gib das HTML für das Input-Feld aus
+
+    // Service-Namen für den Test-Button extrahieren (z.B. 'openai_api_key' -> 'openai')
+    $service = str_replace(['_api_key', '_consumer_key', '_app_id'], '', $key);
+    
+    // Zeige das Input-Feld an
     printf(
-        // Wichtig: Der Name muss 'lww_api_settings[KEY]' sein, damit WP es als Array speichert
         '<input type="password" id="%1$s" name="lww_api_settings[%1$s]" value="%2$s" class="regular-text" placeholder="%3$s" />',
-        esc_attr($key), // id und der Key im Array-Namen
-        $value, // value Attribut
-        __('API-Schlüssel hier einfügen', 'lego-wawi') // placeholder Text
+        esc_attr($key),
+        $value,
+        __('API-Schlüssel hier einfügen', 'lego-wawi')
     );
+
+    // Zeige den Test-Button für relevante Dienste an
+    $testable_services = ['brickowl', 'rebrickable', 'openai', 'gemini', 'ebay'];
+    if (in_array($service, $testable_services)) {
+        printf(
+            ' <button type="button" class="button button-secondary lww-test-api-connection" data-service="%1$s">%2$s</button>',
+            esc_attr($service),
+            __('Verbindung testen', 'lego-wawi')
+        );
+        printf('<span class="lww-api-test-result"></span>');
+    }
+
+    // Füge Hilfetexte hinzu
+    $help_text = '';
+    switch ($key) {
+        case 'brickowl_api_key':
+            $help_text = sprintf(
+                __('Diesen Schlüssel findest du in deinem BrickOwl-Account unter %s.', 'lego-wawi'),
+                '<a href="https://www.brickowl.com/user/api" target="_blank">Settings &rarr; API</a>'
+            );
+            break;
+        case 'bricklink_consumer_key':
+        case 'bricklink_consumer_secret':
+        case 'bricklink_token_value':
+        case 'bricklink_token_secret':
+            $help_text = sprintf(
+                __('Diese vier Werte erhältst du auf BrickLink unter %s. Du musst eine neue Applikation registrieren, um Consumer Key/Secret zu erhalten, und diese dann authorisieren, um Token Value/Secret zu generieren.', 'lego-wawi'),
+                '<a href="https://www.bricklink.com/v2/api/register_consumer.page" target="_blank">API Access</a>'
+            );
+            break;
+        case 'rebrickable_api_key':
+            $help_text = sprintf(
+                __('Deinen API-Key findest du in deinem Rebrickable-Profil unter %s.', 'lego-wawi'),
+                '<a href="https://rebrickable.com/account/api/" target="_blank">Account &rarr; API</a>'
+            );
+            break;
+        case 'openai_api_key':
+            $help_text = sprintf(
+                __('Melde dich bei %s an, navigiere zu %s und erstelle einen neuen "Secret Key".', 'lego-wawi'),
+                '<a href="https://platform.openai.com/" target="_blank">platform.openai.com</a>',
+                '<a href="https://platform.openai.com/api-keys" target="_blank">API Keys</a>'
+            );
+            break;
+        case 'gemini_api_key':
+            $help_text = sprintf(
+                __('Diesen Schlüssel erhältst du über das %s. Klicke dort auf "Get API key".', 'lego-wawi'),
+                '<a href="https://aistudio.google.com/app/apikey" target="_blank">Google AI Studio</a>'
+            );
+            break;
+        case 'ebay_app_id':
+        case 'ebay_dev_id':
+        case 'ebay_cert_id':
+        case 'ebay_auth_token':
+            $help_text = sprintf(
+                __('Diese Werte erhältst du im %s. Erstelle eine neue Applikation, um deine App/Dev/Cert IDs zu erhalten. Der %s muss anschließend über einen User-Consent-Flow generiert werden.', 'lego-wawi'),
+                '<a href="https://developer.ebay.com/" target="_blank">eBay Developers Program</a>',
+                '<strong>' . __('eBay Auth Token', 'lego-wawi') . '</strong>'
+            );
+            break;
+    }
+
+    if ($help_text) {
+        printf('<p class="description">%s</p>', $help_text);
+    }
 }
 
 /**
@@ -136,18 +226,39 @@ function lww_settings_field_number_callback($args) {
     $default = $args['default'] ?? 100;
     $desc = $args['desc'] ?? '';
     
-    // Hole den Wert der einzelnen Option
     $value = get_option($key, $default);
     
     printf(
-        // Name ist hier direkt der Options-Name
         '<input type="number" id="%1$s" name="%1$s" value="%2$d" class="small-text" min="50" step="50" />',
-        esc_attr($key), // id und name Attribut
-        absint($value)  // Stellt sicher, dass es eine positive Ganzzahl ist
+        esc_attr($key),
+        absint($value)
     );
     if ($desc) {
         printf('<p class="description">%s</p>', esc_html($desc));
     }
+}
+
+/**
+ * Callback für KI-Anbieter (Dropdown).
+ */
+function lww_settings_field_ai_provider_select_callback() {
+    $current_value = get_option('lww_ai_provider', 'openai');
+    $providers = [
+        'openai' => 'OpenAI',
+        'gemini' => 'Google Gemini',
+    ];
+
+    echo '<select id="lww_ai_provider" name="lww_ai_provider">';
+    foreach ($providers as $key => $label) {
+        printf(
+            '<option value="%s" %s>%s</option>',
+            esc_attr($key),
+            selected($current_value, $key, false),
+            esc_html($label)
+        );
+    }
+    echo '</select>';
+    echo '<p class="description">' . __('Der hier ausgewählte Dienst benötigt einen gültigen API-Schlüssel oben.', 'lego-wawi') . '</p>';
 }
 
 /**
@@ -176,4 +287,33 @@ function lww_settings_field_cron_select_callback() {
     echo '<p class="description">' . __('Wie oft der Server nach neuen Jobs suchen soll. "Jede Minute" wird empfohlen, außer bei sehr schwachen Servern.', 'lego-wawi') . '</p>';
 }
 
-?>
+/**
+ * AJAX Handler für API-Verbindungstests.
+ */
+function lww_ajax_test_api_connection_handler() {
+    check_ajax_referer('lww_settings_ajax_nonce', '_ajax_nonce');
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(['message' => __('Fehlende Berechtigung.', 'lego-wawi')], 403);
+    }
+
+    $service = isset($_POST['service']) ? sanitize_key($_POST['service']) : '';
+    $api_key = isset($_POST['api_key']) ? sanitize_text_field($_POST['api_key']) : '';
+
+    if (empty($service) || empty($api_key)) {
+        wp_send_json_error(['message' => __('Dienst oder API-Schlüssel fehlt.', 'lego-wawi')], 400);
+    }
+
+    // SIMULATION: Hier würden die echten API-Calls stattfinden.
+    // Wir simulieren eine Erfolgs- oder Fehlermeldung.
+    $is_success = (strlen($api_key) > 10 && strpos($api_key, 'test_fail') === false); 
+
+    // Logge den Versuch (ohne den Schlüssel)
+    lww_log_api_call($service, 'connection_test', $is_success, 0.00, ['status' => $is_success ? 'Success' : 'Failure']);
+
+    if ($is_success) {
+        wp_send_json_success(['message' => __('Verbindung erfolgreich!', 'lego-wawi')]);
+    } else {
+        wp_send_json_error(['message' => __('Verbindung fehlgeschlagen. Bitte prüfe den Schlüssel.', 'lego-wawi')], 401);
+    }
+}
+add_action('wp_ajax_lww_test_api_connection', 'lww_ajax_test_api_connection_handler');

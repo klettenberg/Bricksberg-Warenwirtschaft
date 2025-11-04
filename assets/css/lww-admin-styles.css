@@ -1,17 +1,22 @@
 /**
- * LEGO Warenwirtschaft (WaWi) Admin Styles (v10.0 - Korrigiert & Ergänzt)
+ * LEGO Warenwirtschaft (WaWi) Admin Styles (v13.0)
  */
 
-/* Grundlegendes Layout */
+/* Grundlegendes Layout & Branding */
 .lww-wrap {
     margin-top: 20px;
 }
 
-.lww-wrap h1 {
+.lww-wrap h1.lww-main-title {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 12px;
     font-weight: 600;
+}
+
+.lww-header-logo {
+    height: 32px;
+    width: auto;
 }
 
 .lww-wrap h1 .dashicons {
@@ -40,6 +45,7 @@
     border-radius: 4px 4px 0 0;
     text-decoration: none;
     color: #3c434a;
+    transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out;
 }
 .nav-tab .dashicons {
     font-size: 18px;
@@ -62,11 +68,16 @@
 }
 
 /* Tab-Inhalte */
-.lww-tab-content {
+.lww-tab-content,
+.lww-card {
     background: #fff;
     border: 1px solid #c3c4c7;
-    border-top: none;
     padding: 20px;
+    border-radius: 4px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.07);
+}
+.lww-tab-content {
+    border-top: none;
     margin-top: -1px; /* Verbindet mit den Tabs */
     border-radius: 0 0 4px 4px;
     min-height: 400px;
@@ -76,9 +87,6 @@
     margin-bottom: 20px;
     font-size: 1.5em;
     font-weight: 600;
-}
-.lww-admin-form {
-    padding: 0;
 }
 .lww-admin-form .form-table {
     margin-top: 0;
@@ -90,6 +98,29 @@
 }
 .form-table tr:first-child .lww-form-group-header h3 {
     padding-top: 0.5em;
+}
+
+/* API Test Buttons & Results */
+.lww-test-api-connection .spinner {
+    float: none;
+    vertical-align: middle;
+    margin: -2px 4px 0 0;
+}
+.lww-api-test-result {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 10px;
+    font-weight: 600;
+}
+.lww-api-test-result .spinner {
+    visibility: visible;
+}
+.lww-api-test-result.success {
+    color: #2a9d8f;
+}
+.lww-api-test-result.error {
+    color: #e76f51;
 }
 
 /* Import-Formulare */
@@ -139,14 +170,14 @@
 /* Farben für Job-Status */
 .lww-stat-card.jobs-running { border-left-color: #ffb900; }
 .lww-stat-card.jobs-running .dashicons { color: #ffb900; }
-.lww-stat-card.jobs-pending { border-left-color: #0073aa; } /* NEU */
+.lww-stat-card.jobs-pending { border-left-color: #0073aa; }
 .lww-stat-card.jobs-pending .dashicons { color: #0073aa; }
-.lww-stat-card.jobs-complete { border-left-color: #46b450; } /* NEU */
+.lww-stat-card.jobs-complete { border-left-color: #46b450; }
 .lww-stat-card.jobs-complete .dashicons { color: #46b450; }
 .lww-stat-card.jobs-failed { border-left-color: #dc3232; }
 .lww-stat-card.jobs-failed .dashicons { color: #dc3232; }
 
-/* Farben für Stammdaten-Status (KORRIGIERT) */
+/* Farben für Stammdaten-Status */
 .lww-stat-card.core-data-ok { border-left-color: #46b450; }
 .lww-stat-card.core-data-ok .dashicons { color: #46b450; }
 .lww-stat-card.core-data-missing { border-left-color: #ffb900; }
@@ -171,11 +202,31 @@
 }
 .lww-status-pending { background-color: #0073aa; } /* Blau */
 .lww-status-running { background-color: #ffb900; color: #333; } /* Gelb */
+.lww-status-paused { background-color: #787c82; } /* Grau */
 .lww-status-complete { background-color: #46b450; } /* Grün */
 .lww-status-failed { background-color: #dc3232; } /* Rot */
 .lww-status-trash { background-color: #aaa; } /* Grau */
 
-/* Job-Liste Fortschrittsspalte (NEU) */
+/* Job-Liste Fortschrittsspalte */
+.lww-job-progress-bar {
+    width: 100%;
+    height: 8px;
+    background-color: #e0e0e0;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: 4px;
+    margin-bottom: 4px;
+}
+.lww-job-progress-bar-inner {
+    height: 100%;
+    background-color: #0073aa;
+    border-radius: 4px;
+    transition: width 0.3s ease-in-out;
+}
+.lww-job-progress-text {
+    font-weight: 600;
+    font-size: 13px;
+}
 .lww-last-log {
     color: #50575e;
     font-style: italic;
@@ -185,6 +236,14 @@
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 250px; /* Verhindert Tabellen-Überlauf */
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-decoration-color: #787c82;
+}
+.lww-last-log:hover {
+    color: #0073aa;
+    text-decoration-color: #0073aa;
 }
 .row-count {
     font-weight: 600;
@@ -212,7 +271,7 @@
     border-radius: 2px; /* Innerer Radius */
 }
 
-/* Platzhalter & Hinweise (NEU) */
+/* Platzhalter & Hinweise */
 .lww-notice {
     padding: 10px 15px;
     margin-bottom: 15px;
@@ -221,6 +280,7 @@
     gap: 8px;
     border-left-width: 4px;
     border-left-style: solid;
+    border-radius: 3px;
 }
 .lww-notice .dashicons {
     font-size: 24px;
@@ -258,6 +318,12 @@
     color: #0073aa;
 }
 
+/* KI Nachfrage-Score Platzhalter */
+.lww-demand-score-placeholder {
+    color: #777;
+    font-style: italic;
+}
+
 /* Allgemeine Helfer */
 .lww-text-center { text-align: center; }
 .lww-mt-20 { margin-top: 20px; }
@@ -266,26 +332,31 @@
 
 
 /*
- * NEU: Stile für Inventar-UI AJAX-Buttons (v10.0)
+ * Stile für Inventar-UI AJAX-Buttons
  */
 
-.lww-ajax-create-wc-product {
-    transition: all 0.3s ease;
+.lww-ajax-create-wc-product,
+.lww-ajax-get-brickowl-price,
+.lww-test-api-connection {
+    transition: all 0.2s ease-in-out;
     white-space: nowrap;
 }
 
-.lww-ajax-create-wc-product .spinner {
+.lww-ajax-create-wc-product .spinner,
+.lww-ajax-get-brickowl-price .spinner {
     visibility: visible;
     margin-top: 0;
 }
 
-.lww-ajax-create-wc-product.success {
+.lww-ajax-create-wc-product.success,
+.lww-ajax-get-brickowl-price.success {
     background-color: #46b450 !important; /* Grün */
     border-color: #46b450 !important;
     color: #fff !important;
 }
 
-.lww-ajax-create-wc-product.error {
+.lww-ajax-create-wc-product.error,
+.lww-ajax-get-brickowl-price.error {
     background-color: #dc3232 !important; /* Rot */
     border-color: #dc3232 !important;
     color: #fff !important;
@@ -296,4 +367,124 @@
     font-size: 16px;
     vertical-align: middle;
     line-height: 1;
+}
+
+/*
+ * NEU: Stile für Lagerverwaltung & Daten-Korrektur
+ */
+.lww-storage-grid {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 20px;
+}
+.lww-storage-stats-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+.lww-storage-suggestions-table .suggestion-reason, .lww-suggestion-text {
+    color: #50575e;
+}
+.lww-storage-suggestions-table .suggestion-text, .lww-suggestion-text {
+    font-weight: 600;
+}
+.lww-assign-location-form {
+    display: flex;
+    gap: 5px;
+}
+.lww-assign-location-form input[type="text"] {
+    flex-grow: 1;
+}
+
+/* NEU: Stile für Gefahrenzone */
+.lww-danger-zone {
+    border-left: 4px solid #d63638;
+}
+.lww-danger-zone h2 {
+    color: #d63638;
+}
+.lww-danger-zone .button.delete {
+    background: #d63638;
+    border-color: #b02426 #991f21 #991f21;
+    box-shadow: 0 1px 0 #991f21;
+    color: #fff;
+    text-shadow: 0 -1px 1px #991f21, 1px 0 1px #991f21, 0 1px 1px #991f21, -1px 0 1px #991f21;
+}
+.lww-danger-zone .button.delete:hover {
+    background: #e14d4f;
+    border-color: #d63638;
+}
+
+/* NEU: Stile für Marktplatz-Badges */
+.lww-marketplace-badges {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+.lww-marketplace-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    border-radius: 3px;
+    color: #fff;
+    text-decoration: none;
+    line-height: 1.5;
+}
+.lww-marketplace-badge:hover {
+    color: #fff;
+    opacity: 0.9;
+}
+.lww-marketplace-bo {
+    background-color: #00a0d2; /* BrickOwl Blau */
+}
+.lww-marketplace-wc {
+    background-color: #96588a; /* WooCommerce Lila */
+}
+.lww-marketplace-ebay {
+    background-color: #e53238; /* eBay Rot */
+}
+
+
+@media (max-width: 960px) {
+    .lww-storage-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+
+/* 
+ * Kompakteres Layout & Animationen 
+ */
+.toplevel_page_lego_wawi_admin_page .wp-list-table th,
+.bricksberg-wawi_page_lww_inventory_ui .wp-list-table th,
+.bricksberg-wawi_page_lww_api_log_ui .wp-list-table th,
+.edit-php.post-type-lww_part .wp-list-table th,
+.edit-php.post-type-lww_set .wp-list-table th,
+.edit-php.post-type-lww_minifig .wp-list-table th,
+.edit-php.post-type-lww_color .wp-list-table th,
+.edit-php.post-type-lww_inventory_item .wp-list-table th {
+    padding: 8px;
+}
+
+.toplevel_page_lego_wawi_admin_page .wp-list-table td,
+.bricksberg-wawi_page_lww_inventory_ui .wp-list-table td,
+.bricksberg-wawi_page_lww_api_log_ui .wp-list-table td,
+.edit-php.post-type-lww_part .wp-list-table td,
+.edit-php.post-type-lww_set .wp-list-table td,
+.edit-php.post-type-lww_minifig .wp-list-table td,
+.edit-php.post-type-lww_color .wp-list-table td,
+.edit-php.post-type-lww_inventory_item .wp-list-table td {
+    padding: 6px 8px;
+    vertical-align: middle;
+}
+
+.wp-list-table tbody tr {
+    transition: background-color 0.2s ease-in-out;
+}
+
+.wp-list-table tbody tr:hover {
+    background-color: #f8f9fa;
 }
