@@ -1,7 +1,7 @@
 ```markdown
 # Bricksberg Warenwirtschaft (WaWi) für WordPress
 
-**Version:** 0.50.0
+**Version:** 0.57.0
 **Autor:** Olaf Ziörjen (bricksberg.eu)
 
 ---
@@ -48,7 +48,7 @@ Bricksberg WaWi wurde von Grund auf modular konzipiert. Der Plugin-Kern liefert 
 
 *   WordPress 6.2 oder höher
 *   PHP 8.0 oder höher (8.1+ empfohlen)
-*   WooCommerce Plugin (aktiviert)
+*   **WooCommerce Plugin (aktiviert) - Obligatorisch**
 *   Ein funktionierender WP-Cron oder ein Server-seitiger Cronjob für eine zuverlässige Hintergrundverarbeitung.
 *   Ausreichende Server-Ressourcen (`memory_limit` von 256M oder höher empfohlen, `max_execution_time` von 300 oder höher).
 *   Eine SSL-verschlüsselte Website (HTTPS) wird für die sichere API-Kommunikation dringend empfohlen.
@@ -65,7 +65,7 @@ Navigieren Sie in Ihrem WordPress-Adminbereich zu **Plugins &rarr; Installieren*
 
 **3. Plugin aktivieren**
 Aktivieren Sie das Plugin "Bricksberg Warenwirtschaft (WaWi)" in der Plugin-Liste.
-*   **Wichtig:** Bei der ersten Aktivierung werden alle notwendigen Datenstrukturen (Custom Post Types, Taxonomien) angelegt und die Jobs für die Hintergrundverarbeitung werden initial geplant.
+*   **Wichtig:** Stellen Sie sicher, dass WooCommerce installiert und aktiviert ist. Andernfalls wird das Plugin nicht geladen. Bei der ersten Aktivierung werden alle notwendigen Datenstrukturen (Custom Post Types, Taxonomien) angelegt und die Jobs für die Hintergrundverarbeitung werden initial geplant.
 
 **4. Plugin konfigurieren**
 *   Navigieren Sie zu **LEGO WaWi &rarr; Einstellungen**.
@@ -197,4 +197,5 @@ Nachdem Ihr Katalog und Ihr Master-Inventar importiert sind, können Sie die Syn
 *   **Support:** Für Premium-Module wird dedizierter E-Mail-Support angeboten. Für das kostenlose Kern-Plugin wird Community-Support über das WordPress.org-Supportforum (sobald veröffentlicht) oder GitHub bereitgestellt.
 
 *(Dieses Handbuch wird parallel zur Entwicklung des Plugins kontinuierlich aktualisiert.)*
+```
 ```

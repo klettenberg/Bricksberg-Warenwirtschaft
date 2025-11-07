@@ -130,6 +130,45 @@ function lww_register_settings() {
             'desc' => __('Zeilen, die pro Durchlauf (Inventar) verarbeitet werden.', 'lego-wawi')
         ]
     );
+
+    // === 4. Job-Prioritäten Sektion ===
+    add_settings_section(
+        'lww_job_priorities_section',
+        __('Job-Prioritäten', 'lego-wawi'),
+        function () {
+            echo '<p>' . __('Lege die Priorität für verschiedene Hintergrund-Jobs fest. Eine niedrigere Zahl bedeutet eine höhere Priorität (z.B. 0 = höchste, 20 = niedriger).', 'lego-wawi') . '</p>';
+        },
+        $settings_page_slug
+    );
+
+    $job_priorities = [
+        'data_purge' => ['label' => __('Datenbereinigung', 'lego-wawi'), 'default' => 0],
+        'inventory_backup_import' => ['label' => __('Inventar-Backup Import', 'lego-wawi'), 'default' => 5],
+        'bricklink_inventory_import' => ['label' => __('BrickLink Inventar-Import', 'lego-wawi'), 'default' => 5],
+        'catalog_import' => ['label' => __('Katalog-Import', 'lego-wawi'), 'default' => 10],
+        'inventory_import' => ['label' => __('Inventar-Import', 'lego-wawi'), 'default' => 10],
+        'location_sync' => ['label' => __('Lagerort-Synchronisation', 'lego-wawi'), 'default' => 10],
+        'demand_analysis' => ['label' => __('Nachfrageanalyse (KI)', 'lego-wawi'), 'default' => 15],
+        'ebay_sync' => ['label' => __('eBay Inventar Sync', 'lego-wawi'), 'default' => 15],
+        'brickowl_inventory_sync' => ['label' => __('BrickOwl Bestandsabgleich', 'lego-wawi'), 'default' => 15],
+        'description_generation' => ['label' => __('Beschreibungserstellung (KI)', 'lego-wawi'), 'default' => 20],
+        'brickowl_price_sync' => ['label' => __('BrickOwl Preis-Sync', 'lego-wawi'), 'default' => 20],
+        'data_validation' => ['label' => __('Daten-Validierung', 'lego-wawi'), 'default' => 25],
+        'brickowl_catalog_enrichment' => ['label' => __('BrickOwl Katalog-Anreicherung', 'lego-wawi'), 'default' => 25],
+    ];
+
+    foreach ($job_priorities as $key => $details) {
+        $option_name = 'lww_job_priority_' . $key;
+        register_setting('lww_settings_group', $option_name, ['type' => 'number', 'sanitize_callback' => 'absint', 'default' => $details['default']]);
+        add_settings_field(
+            $option_name,
+            $details['label'],
+            'lww_settings_field_priority_number_callback',
+            $settings_page_slug,
+            'lww_job_priorities_section',
+            ['key' => $option_name, 'default' => $details['default']]
+        );
+    }
 }
 add_action('admin_init', 'lww_register_settings');
 
@@ -237,6 +276,22 @@ function lww_settings_field_number_callback($args) {
         printf('<p class="description">%s</p>', esc_html($desc));
     }
 }
+
+/**
+ * Callback für Nummern-Felder (Prioritäten).
+ */
+function lww_settings_field_priority_number_callback($args) {
+    $key = $args['key'];
+    $default = $args['default'] ?? 10;
+    $value = get_option($key, $default);
+    
+    printf(
+        '<input type="number" id="%1$s" name="%1$s" value="%2$d" class="small-text" min="0" step="1" />',
+        esc_attr($key),
+        absint($value)
+    );
+}
+
 
 /**
  * Callback für KI-Anbieter (Dropdown).

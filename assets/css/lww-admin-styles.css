@@ -1,5 +1,5 @@
 /**
- * LEGO Warenwirtschaft (WaWi) Admin Styles (v13.0)
+ * LEGO Warenwirtschaft (WaWi) Admin Styles (v14.0)
  */
 
 /* Grundlegendes Layout & Branding */
@@ -7,7 +7,7 @@
     margin-top: 20px;
 }
 
-.lww-wrap h1.lww-main-title {
+.lww-wrap h1 {
     display: flex;
     align-items: center;
     gap: 12px;
@@ -458,26 +458,23 @@
 /* 
  * Kompakteres Layout & Animationen 
  */
-.toplevel_page_lego_wawi_admin_page .wp-list-table th,
+.lww-wrap .wp-list-table th,
+.lww-wrap .wp-list-table td,
 .bricksberg-wawi_page_lww_inventory_ui .wp-list-table th,
-.bricksberg-wawi_page_lww_api_log_ui .wp-list-table th,
-.edit-php.post-type-lww_part .wp-list-table th,
-.edit-php.post-type-lww_set .wp-list-table th,
-.edit-php.post-type-lww_minifig .wp-list-table th,
-.edit-php.post-type-lww_color .wp-list-table th,
-.edit-php.post-type-lww_inventory_item .wp-list-table th {
-    padding: 8px;
-}
-
-.toplevel_page_lego_wawi_admin_page .wp-list-table td,
 .bricksberg-wawi_page_lww_inventory_ui .wp-list-table td,
+.bricksberg-wawi_page_lww_api_log_ui .wp-list-table th,
 .bricksberg-wawi_page_lww_api_log_ui .wp-list-table td,
+.edit-php.post-type-lww_part .wp-list-table th,
 .edit-php.post-type-lww_part .wp-list-table td,
+.edit-php.post-type-lww_set .wp-list-table th,
 .edit-php.post-type-lww_set .wp-list-table td,
+.edit-php.post-type-lww_minifig .wp-list-table th,
 .edit-php.post-type-lww_minifig .wp-list-table td,
+.edit-php.post-type-lww_color .wp-list-table th,
 .edit-php.post-type-lww_color .wp-list-table td,
+.edit-php.post-type-lww_inventory_item .wp-list-table th,
 .edit-php.post-type-lww_inventory_item .wp-list-table td {
-    padding: 6px 8px;
+    padding: 8px;
     vertical-align: middle;
 }
 

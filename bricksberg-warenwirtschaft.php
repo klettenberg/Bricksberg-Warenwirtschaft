@@ -3,7 +3,7 @@
  * Plugin Name:       Bricksberg Warenwirtschaft (WaWi)
  * Plugin URI:        https://bricksberg.eu/
  * Description:       Professionelles Warenwirtschaftssystem für LEGO® Händler. Importiert Rebrickable-Kataloge und synchronisiert Inventar mit BrickOwl und WooCommerce.
- * Version:           0.47.6
+ * Version:           0.58.0
  * Author:            Bricksberg
  * Author URI:        https://bricksberg.eu/
  * License:           GPL v2 or later

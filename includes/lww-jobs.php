@@ -220,11 +220,14 @@ class LWW_Jobs_List_Table extends WP_List_Table {
              case 'catalog_import': return __('Katalog-Import', 'lego-wawi');
              case 'inventory_import': return __('Inventar-Import', 'lego-wawi');
              case 'inventory_backup_import': return __('Inventar-Backup Import', 'lego-wawi');
+             case 'bricklink_inventory_import': return __('BrickLink Inventar-Import', 'lego-wawi');
              case 'demand_analysis': return __('Nachfrageanalyse (KI)', 'lego-wawi');
              case 'description_generation': return __('Beschreibung (KI)', 'lego-wawi');
              case 'location_sync': return __('Lagerort-Sync', 'lego-wawi');
              case 'ebay_sync': return __('eBay Inventar Sync', 'lego-wawi');
-             case 'brickowl_sync': return __('BrickOwl Preis-Sync', 'lego-wawi');
+             case 'brickowl_price_sync': return __('BrickOwl Preis-Sync', 'lego-wawi');
+             case 'brickowl_inventory_sync': return __('BrickOwl Bestandsabgleich', 'lego-wawi');
+             case 'brickowl_catalog_enrichment': return __('BrickOwl Katalog-Anreicherung', 'lego-wawi');
              case 'data_validation': return __('Daten-Validierung', 'lego-wawi');
              case 'data_purge': return __('Datenbereinigung', 'lego-wawi');
              default: return esc_html($type ?: __('Unbekannt', 'lego-wawi'));
@@ -248,7 +251,7 @@ class LWW_Jobs_List_Table extends WP_List_Table {
         $progress_percent = 0;
         $progress_text = '';
 
-        if (in_array($job_type, ['inventory_import', 'inventory_backup_import', 'demand_analysis', 'description_generation', 'location_sync', 'ebay_sync', 'brickowl_sync'])) {
+        if (in_array($job_type, ['inventory_import', 'inventory_backup_import', 'bricklink_inventory_import', 'demand_analysis', 'description_generation', 'location_sync', 'ebay_sync', 'brickowl_price_sync', 'brickowl_inventory_sync', 'brickowl_catalog_enrichment'])) {
             $processed = (int) get_post_meta($item->ID, '_processed_items', true);
             $total = (int) get_post_meta($item->ID, '_total_items', true);
             if ($total > 0) {

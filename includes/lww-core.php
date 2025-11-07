@@ -1,6 +1,6 @@
 <?php
 /**
- * Modul: Core Plugin Klasse (v14.0)
+ * Modul: Core Plugin Klasse (v15.0)
  * 
  * Diese Klasse ist der zentrale Einstiegspunkt des Plugins. Sie ist als Singleton implementiert,
  * um sicherzustellen, dass sie nur einmal geladen wird. Sie definiert Konstanten, lädt alle
@@ -16,7 +16,7 @@ final class LWW_Core {
      * Plugin-Version.
      * @var string
      */
-    public $version = '0.45.1';
+    public $version = '0.57.0';
 
     /**
      * Die einzige Instanz der Klasse.
@@ -40,8 +40,47 @@ final class LWW_Core {
      */
     private function __construct() {
         $this->define_constants();
+        add_action('plugins_loaded', [$this, 'init_plugin']);
+    }
+
+    /**
+     * Initialisiert das Plugin, prüft Abhängigkeiten und lädt die Module.
+     */
+    public function init_plugin() {
+        if (!$this->check_dependencies()) {
+            add_action('admin_notices', [$this, 'render_dependency_notice']);
+            return; // Plugin nicht laden, wenn Abhängigkeiten fehlen
+        }
+
         $this->includes();
         $this->init_hooks();
+    }
+
+    /**
+     * Prüft, ob alle notwendigen Plugins (WooCommerce) aktiv sind.
+     * @return bool True, wenn alle Abhängigkeiten erfüllt sind, sonst false.
+     */
+    private function check_dependencies() {
+        return class_exists('WooCommerce');
+    }
+
+    /**
+     * Zeigt eine Admin-Notiz an, wenn WooCommerce fehlt.
+     */
+    public function render_dependency_notice() {
+        ?>
+        <div class="notice notice-error is-dismissible">
+            <p>
+                <strong><?php _e('Bricksberg Warenwirtschaft (WaWi) - Fehler:', 'lego-wawi'); ?></strong>
+                <?php printf(
+                    __('Das Plugin benötigt %1$sWooCommerce%2$s, um zu funktionieren. Bitte installieren und aktivieren Sie WooCommerce.', 'lego-wawi'),
+                    '<a href="' . esc_url(admin_url('plugin-install.php?s=woocommerce&tab=search&type=term')) . '" target="_blank">',
+                    '</a>'
+                );
+                ?>
+            </p>
+        </div>
+        <?php
     }
 
     /**
@@ -49,7 +88,7 @@ final class LWW_Core {
      */
     private function define_constants() {
         define('LWW_PLUGIN_VERSION', $this->version);
-        define('LWW_PLUGIN_SLUG', 'bricksberg_wawi_dashboard'); // Geändert für die neue Hauptseite
+        define('LWW_PLUGIN_SLUG', 'bricksberg_wawi_dashboard');
         define('LWW_PLUGIN_PATH', plugin_dir_path(dirname(__FILE__)));
         define('LWW_PLUGIN_URL', plugin_dir_url(dirname(__FILE__)));
     }

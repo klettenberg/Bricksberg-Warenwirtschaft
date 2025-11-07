@@ -1,6 +1,6 @@
 <?php
 /**
- * Modul: Custom Post Types (v13.0)
+ * Modul: Custom Post Types (v14.0)
  * Registriert CPTs: Teil, Set, Minifig, Farbe, Job, Inventar-Item.
  */
 
@@ -77,12 +77,12 @@ function lww_register_cpts() {
 
     // CPT: lww_inventory_item (BrickOwl Inventar-Item)
     $inventory_args = $base_args;
-    $inventory_args['label'] = __('BrickOwl Inventar Item', 'lego-wawi');
-    $inventory_args['description'] = __('Ein einzelner Posten aus dem BrickOwl Inventar', 'lego-wawi');
-    $inventory_args['labels'] = lww_get_cpt_labels('Inventar Item', 'Inventar Items');
-    $inventory_args['menu_icon'] = 'dashicons-archive'; // Neues Icon
+    $inventory_args['label'] = __('Inventar-Eintrag', 'lego-wawi');
+    $inventory_args['description'] = __('Ein einzelner Posten aus dem importierten Inventar', 'lego-wawi');
+    $inventory_args['labels'] = lww_get_cpt_labels('Inventar-Eintrag', 'Inventar-Einträge');
+    $inventory_args['menu_icon'] = 'dashicons-archive';
     $inventory_args['supports'] = ['title', 'custom-fields']; // Titel wird z.B. "3001 Red Used"
-    $inventory_args['show_in_menu'] = false; // Als Untermenüpunkt
+    $inventory_args['show_in_menu'] = LWW_PLUGIN_SLUG; // Als Untermenüpunkt
     register_post_type('lww_inventory_item', $inventory_args);
 
     // CPT: lww_api_log (API-Nutzungs-Log)

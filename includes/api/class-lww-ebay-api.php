@@ -1,6 +1,6 @@
 <?php
 /**
- * Modul: eBay API-Kommunikation
+ * Modul: eBay API-Kommunikation (v14.0)
  *
  * Stellt eine Klasse zur Verfügung, um mit der eBay API zu interagieren.
  * HINWEIS: Die Funktionalität ist SIMULIERT.

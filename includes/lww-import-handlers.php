@@ -1,6 +1,6 @@
 <?php
 /**
- * Modul: Upload & Job Erstellung (v12.0)
+ * Modul: Upload & Job Erstellung (v14.0)
  *
  * Behandelt Datei-Uploads und erstellt Jobs in der Warteschlange
  * für Katalog- und Inventar-Importe.
@@ -320,6 +320,80 @@ function lww_inventory_backup_import_handler() {
     exit;
 }
 add_action('admin_post_lww_upload_inventory_backup_csv', 'lww_inventory_backup_import_handler');
+
+/**
+ * Handler für BrickLink Inventar-XML-Upload.
+ * Erstellt einen neuen Job vom Typ 'bricklink_inventory_import'.
+ */
+function lww_bricklink_inventory_import_handler() {
+    if (!isset($_POST['_wpnonce']) || !wp_verify_nonce($_POST['_wpnonce'], 'lww_bricklink_inventory_import_nonce')) {
+        wp_die(__('Sicherheitsüberprüfung fehlgeschlagen.', 'lego-wawi'));
+    }
+    if (!current_user_can('manage_options')) {
+        wp_die(__('Du hast keine Berechtigung.', 'lego-wawi'));
+    }
+    if (!isset($_FILES['bricklink_inventory_xml_file']) || $_FILES['bricklink_inventory_xml_file']['error'] !== UPLOAD_ERR_OK) {
+        add_settings_error('lww_messages', 'bl_inv_upload_error', __('Fehler beim Upload der BrickLink-Datei: ', 'lego-wawi') . lww_get_upload_error_message($_FILES['bricklink_inventory_xml_file']['error'] ?? UPLOAD_ERR_NO_FILE), 'error');
+        set_transient('settings_errors', get_settings_errors(), 30);
+        wp_safe_redirect(admin_url('admin.php?page=lww_import_ui'));
+        exit;
+    }
+
+    $upload_dir = wp_upload_dir();
+    $tmp_name = $_FILES['bricklink_inventory_xml_file']['tmp_name'];
+    $name = $_FILES['bricklink_inventory_xml_file']['name'];
+    $file_ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+
+    if ($file_ext !== 'xml') {
+        add_settings_error('lww_messages', 'bl_inv_wrong_type', __('Falscher Dateityp. Bitte lade eine .xml-Datei hoch.', 'lego-wawi'), 'error');
+        set_transient('settings_errors', get_settings_errors(), 30);
+        wp_safe_redirect(admin_url('admin.php?page=lww_import_ui'));
+        exit;
+    }
+
+    $timestamp = time();
+    $target_csv_path = $upload_dir['basedir'] . '/lww_import_bricklink_inventory_' . $timestamp . '.csv'; // Als CSV speichern, da Inhalt CSV ist
+    $priority = (int) get_option('lww_job_priority_bricklink_inventory_import', 5);
+
+    if (is_uploaded_file($tmp_name) && move_uploaded_file($tmp_name, $target_csv_path)) {
+        $job_queue = [[ 
+            'key'            => 'bricklink_inventory',
+            'path'           => $target_csv_path,
+            'status'         => 'pending',
+            'rows_processed' => 0,
+            'total_rows'     => 0,
+        ]];
+
+        $job_id = wp_insert_post([
+            'post_title'   => sprintf(__('BrickLink Inventar-Import (%s)', 'lego-wawi'), esc_html($name)) . ' - ' . date_i18n('d.m.Y H:i'),
+            'post_type'    => 'lww_job',
+            'post_status'  => 'lww_pending',
+            'post_author'  => get_current_user_id(),
+            'menu_order'   => $priority,
+        ], true);
+
+        if (is_wp_error($job_id)) {
+            add_settings_error('lww_messages', 'bl_inv_job_creation_failed', __('Fehler beim Erstellen des BrickLink Import-Jobs: ', 'lego-wawi') . $job_id->get_error_message(), 'error');
+            @unlink($target_csv_path);
+        } else {
+            update_post_meta($job_id, '_job_type', 'bricklink_inventory_import');
+            update_post_meta($job_id, '_job_queue', $job_queue);
+            update_post_meta($job_id, '_current_task_index', 0);
+            lww_log_to_job($job_id, 'BrickLink Inventar-Import-Job erstellt.');
+
+            lww_start_cron_job();
+
+            add_settings_error('lww_messages', 'bl_inv_job_created', __('Neuer BrickLink Import-Job wurde erfolgreich erstellt.', 'lego-wawi'), 'success');
+        }
+    } else {
+        add_settings_error('lww_messages', 'bl_inv_move_error', __('Die hochgeladene BrickLink-Datei konnte nicht verarbeitet werden.', 'lego-wawi'), 'error');
+    }
+
+    set_transient('settings_errors', get_settings_errors(), 30);
+    wp_safe_redirect(admin_url('admin.php?page=lww_jobs_ui'));
+    exit;
+}
+add_action('admin_post_lww_upload_bricklink_inventory_xml', 'lww_bricklink_inventory_import_handler');
 
 
 // --- HILFSFUNKTIONEN FÜR DATEI-ENTPACKUNG ---

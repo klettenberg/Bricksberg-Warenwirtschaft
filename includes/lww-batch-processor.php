@@ -1,6 +1,6 @@
 <?php
 /**
- * Modul: Batch-Prozessor (v13.0)
+ * Modul: Batch-Prozessor (v14.0)
  * Verarbeitet die Job-Warteschlange (CPT 'lww_job') im Hintergrund.
  * Ruft dynamisch die korrekte Handler-Klasse für die Zeilenverarbeitung auf.
  * Liest Cron-Intervall und Batch-Größen aus den WordPress-Optionen.
@@ -28,7 +28,7 @@ function lww_run_job_processor() {
         } else {
             // Prüfen, wie lange der Job schon läuft (Timeout)
             $last_modified_time = strtotime($job_post->post_modified_gmt);
-            $timeout_seconds = apply_filters('lww_job_timeout', 300); // 5 Minuten Timeout
+            $timeout_seconds = apply_filters('lww_job_timeout', 600); // 10 Minuten Timeout (vorher 300)
             if (time() > ($last_modified_time + $timeout_seconds)) {
                 lww_log_system_event('Job ' . $current_job_id_option . ' hat Timeout (' . $timeout_seconds . 's) überschritten. Sperre wird aufgehoben.');
                 lww_fail_job($current_job_id_option, __('Job wegen Timeout abgebrochen.', 'lego-wawi'));
@@ -95,7 +95,7 @@ function lww_run_job_processor() {
         lww_log_system_event('Starte Verarbeitung Job ' . $job_id . '...');
         if ($job_type === 'catalog_import') {
             lww_process_catalog_job_batch($job_id);
-        } elseif ($job_type === 'inventory_import' || $job_type === 'inventory_backup_import') {
+        } elseif (in_array($job_type, ['inventory_import', 'inventory_backup_import', 'bricklink_inventory_import'])) {
             lww_process_inventory_job_batch($job_id, $job_type);
         } elseif ($job_type === 'demand_analysis') {
             lww_process_demand_analysis_batch($job_id);
@@ -105,8 +105,12 @@ function lww_run_job_processor() {
             lww_process_location_sync_batch($job_id);
         } elseif ($job_type === 'ebay_sync') {
             lww_process_ebay_sync_batch($job_id);
-        } elseif ($job_type === 'brickowl_sync') {
-            lww_process_brickowl_sync_batch($job_id);
+        } elseif ($job_type === 'brickowl_price_sync') {
+            lww_process_brickowl_price_sync_batch($job_id);
+        } elseif ($job_type === 'brickowl_inventory_sync') {
+            lww_process_brickowl_inventory_sync_batch($job_id);
+        } elseif ($job_type === 'brickowl_catalog_enrichment') {
+            lww_process_brickowl_catalog_enrichment_batch($job_id);
         } elseif ($job_type === 'data_purge') {
             lww_process_data_purge_batch($job_id);
         } elseif ($job_type === 'data_validation') {
@@ -120,7 +124,8 @@ function lww_run_job_processor() {
             lww_log_system_event('Job ' . $job_id . ' markiert als "' . $current_status . '". Sperre sollte bereits aufgehoben sein.');
         } else if ($current_status === 'lww_running') {
              wp_update_post(['ID' => $job_id, 'post_modified' => current_time('mysql'), 'post_modified_gmt' => current_time('mysql', 1)]);
-             lww_log_system_event('Batch Job ' . $job_id . ' beendet, Status "' . $current_status . '". Sperre bleibt aktiv.');
+             delete_option('lww_current_running_job_id'); // KORREKTUR: Sperre nach jedem Batch freigeben
+             lww_log_system_event('Batch Job ' . $job_id . ' beendet, Status "' . $current_status . '". Sperre wird für nächsten Lauf freigegeben.');
         } else {
             lww_log_system_event('WARNUNG: Unerwarteter Status "' . $current_status . '" nach Batch für Job ' . $job_id);
         }
@@ -295,32 +300,56 @@ function lww_process_inventory_job_batch($job_id, $job_type = 'inventory_import'
     if ($current_row > 0) { lww_log_system_event('Springe Z ' . $current_row . '...'); @set_time_limit(300); for ($i = 0; $i < $current_row; $i++) { if (feof($handle)) { lww_log_system_event('WARN: EOF beim Springen Z ' . $current_row); @fclose($handle); return lww_skip_or_complete_job($job_id, $job_queue, $task_index, 'eof_during_skip'); } if (@fgets($handle) === false && !feof($handle)) { @fclose($handle); throw new Exception('Fehler beim Springen.'); } } lww_log_system_event('Sprung Z ' . $current_row . ' beendet.'); }
     
     $header_map_key = '_header_map_inventory'; $header_map = get_post_meta($job_id, $header_map_key, true);
+    $delimiter = ','; // Standard-Trennzeichen
+
     if ($current_row === 0 || empty($header_map) || empty($job_queue[$task_index]['total_rows'])) {
         lww_log_system_event('Lese Inventar-Header und zähle Zeilen...'); 
-        $header = @fgetcsv($handle);
+
+        // --- START: Delimiter Sniffing (Fehlerbehebung für Semikolon-getrennte CSVs) ---
+        rewind($handle);
+        $first_line_for_sniffing = fgets($handle);
+        if ($first_line_for_sniffing) {
+            if ($job_type !== 'bricklink_inventory_import' && substr_count($first_line_for_sniffing, ';') > substr_count($first_line_for_sniffing, ',')) {
+                $delimiter = ';';
+            } // BrickLink uses tabs, but fgetcsv handles quoted CSV correctly with commas.
+        }
+        rewind($handle); // Zurück zum Anfang, damit der Header korrekt gelesen wird
+        lww_log_system_event('Inventar-Import (Job ' . $job_id . '): Verwende Trennzeichen "' . $delimiter . '".');
+        // --- ENDE: Delimiter Sniffing ---
+
+        $header = @fgetcsv($handle, 0, $delimiter); // Verwende den erkannten Delimiter
+
         if ($header && is_array($header) && count($header) > 0) {
             $header_normalized = array_map('strtolower', array_map('trim', $header));
-            
-            // --- START DER FEHLERBEHEBUNG ---
-            // Robuste Spaltenzuordnung, die den `array_search` `0`-Bug behebt.
-            $possible_maps = [
-                'boid' => ['boid'],
-                'name' => ['name', 'item_name'],
-                'color_name' => ['color_name', 'color'],
-                'condition' => ['condition'],
-                'quantity' => ['quantity', 'qty'],
-                'price' => ['unit_price', 'price'],
-                'bulk' => ['bulk'],
-                'sale_price' => ['sale_price'],
-                'remarks' => ['remarks'],
-                'external_id' => ['external_id', 'external_id_1'],
-                'location' => ['location'],
-                'tier_qty_1' => ['tier_qty_1'], 'tier_price_1' => ['tier_price_1'],
-                'tier_qty_2' => ['tier_qty_2'], 'tier_price_2' => ['tier_price_2'],
-                'tier_qty_3' => ['tier_qty_3'], 'tier_price_3' => ['tier_price_3'],
-            ];
-
             $header_map = [];
+
+            if ($job_type === 'bricklink_inventory_import') {
+                $header = explode("\t", $first_line_for_sniffing);
+                $header_normalized = array_map('strtolower', array_map('trim', $header));
+                $delimiter = "\t";
+                lww_log_system_event('BrickLink Import erkannt. Verwende Tabulator als Trennzeichen.');
+
+                $possible_maps = [
+                    'lot_id' => ['lot id'], 'color' => ['color'], 'category' => ['category'], 'condition' => ['condition'], 'sub_condition' => ['sub-condition'],
+                    'description' => ['description'], 'remarks' => ['remarks'], 'price' => ['price'], 'quantity' => ['quantity'], 'bulk' => ['bulk'],
+                    'sale' => ['sale'], 'url' => ['url'], 'item_no' => ['item no'], 'tier_qty_1' => ['tier qty 1'], 'tier_price_1' => ['tier price 1'],
+                    'tier_qty_2' => ['tier qty 2'], 'tier_price_2' => ['tier price 2'], 'tier_qty_3' => ['tier qty 3'], 'tier_price_3' => ['tier price 3'],
+                    'reserved_for' => ['reserved for'], 'stockroom' => ['stockroom'], 'retain' => ['retain'], 'super_lot_id' => ['super lot id'],
+                    'super_lot_qty' => ['super lot qty'], 'weight' => ['weight'], 'extended_description' => ['extended description'], 'date_added' => ['date added'],
+                    'date_last_sold' => ['date last sold'], 'currency' => ['currency'],
+                ];
+            } else { // BrickOwl Logik
+                $possible_maps = [
+                    'lot_id' => ['lot_id'], 'item_id' => ['item_id'], 'boid' => ['boid'], 'external_id' => ['external_id', 'external_lot_id', 'external_id_1'],
+                    'name' => ['name', 'item_name'], 'quantity' => ['quantity', 'qty', 'menge'], 'price' => ['unit_price', 'price', 'base_price', 'preis'],
+                    'condition' => ['condition', 'zustand'], 'tier_qty_1' => ['tier_qty_1'], 'tier_price_1' => ['tier_price_1'], 'tier_qty_2' => ['tier_qty_2'],
+                    'tier_price_2' => ['tier_price_2'], 'tier_qty_3' => ['tier_qty_3'], 'tier_price_3' => ['tier_price_3'], 'bulk' => ['bulk', 'bulk_qty'],
+                    'sale_price' => ['sale_price', 'sale_percent'], 'for_sale' => ['for_sale'], 'remarks' => ['remarks', 'personal_note', 'notizen'],
+                    'public_notes' => ['public_notes', 'public_note'], 'my_weight' => ['my_weight'], 'weight' => ['weight'], 'my_cost' => ['my_cost'],
+                    'force_quote' => ['force_quote'], 'reserve_uid' => ['reserve_uid'], 'location' => ['location'], 'color_name' => ['color_name', 'color', 'farbe'],
+                ];
+            }
+            
             foreach ($possible_maps as $target_key => $source_keys) {
                 $header_map[$target_key] = false; // Standardwert
                 foreach ($source_keys as $source_key) {
@@ -331,12 +360,14 @@ function lww_process_inventory_job_batch($job_id, $job_type = 'inventory_import'
                     }
                 }
             }
-            // --- ENDE DER FEHLERBEHEBUNG ---
 
-            $required_cols = ['boid','color_name','condition','quantity','price']; $missing_cols = [];
-            foreach($required_cols as $req_col){ if(!isset($header_map[$req_col]) || $header_map[$req_col] === false) { $missing_cols[] = $req_col; } }
+            $required_cols = ($job_type === 'bricklink_inventory_import') ? ['item no', 'color', 'lot id'] : ['boid','color_name','condition','quantity','price'];
+            $missing_cols = [];
+            foreach($required_cols as $req_col){ if(!isset($header_map[str_replace(' ', '_', $req_col)]) || $header_map[str_replace(' ', '_', $req_col)] === false) { $missing_cols[] = $req_col; } }
             if(!empty($missing_cols)){ @fclose($handle); throw new Exception('Inventar-CSV Spalten fehlen: '.implode(', ',$missing_cols)); }
-            update_post_meta($job_id, $header_map_key, $header_map); $current_row++; 
+
+            update_post_meta($job_id, $header_map_key, $header_map);
+            $current_row++; 
 
             // Total rows zählen für Fortschrittsanzeige
             $total_rows = 1; // Header-Zeile
@@ -351,15 +382,37 @@ function lww_process_inventory_job_batch($job_id, $job_type = 'inventory_import'
             update_post_meta($job_id, '_job_queue', $job_queue); 
             lww_log_system_event('Inventar-Header gelesen, ' . $total_rows . ' Zeilen gezählt.');
         } else { @fclose($handle); throw new Exception('Inventar-Header nicht lesbar.'); }
+    } else {
+        // Delimiter auch für nachfolgende Batches laden
+        rewind($handle);
+        $first_line_for_sniffing = fgets($handle);
+        if ($first_line_for_sniffing) {
+            if ($job_type !== 'bricklink_inventory_import' && substr_count($first_line_for_sniffing, ';') > substr_count($first_line_for_sniffing, ',')) {
+                $delimiter = ';';
+            } elseif ($job_type === 'bricklink_inventory_import') {
+                $delimiter = "\t";
+            }
+        }
+        rewind($handle);
+        // Überspringe bereits verarbeitete Zeilen
+        for ($i = 0; $i < $current_row; $i++) {
+             if (feof($handle)) { break; }
+             fgets($handle);
+        }
     }
     if (empty($header_map) || !is_array($header_map)) { @fclose($handle); throw new Exception('Inventar-Header-Map fehlt.'); }
 
     // --- Handler-Klasse finden (v12.0) ---
     static $handler_cache_inv = [];
-    $class_name = ($job_type === 'inventory_backup_import') ? 'LWW_Import_Inventory_Backup_Handler' : 'LWW_Import_Inventory_Handler';
+    $handler_map_classes = [
+        'inventory_import' => 'LWW_Import_Inventory_Handler',
+        'inventory_backup_import' => 'LWW_Import_Inventory_Backup_Handler',
+        'bricklink_inventory_import' => 'LWW_Import_Bricklink_Inventory_Handler',
+    ];
+    $class_name = $handler_map_classes[$job_type] ?? null;
 
     if (!isset($handler_cache_inv[$class_name])) {
-         if (class_exists($class_name)) { $handler_cache_inv[$class_name] = new $class_name(); } 
+         if ($class_name && class_exists($class_name)) { $handler_cache_inv[$class_name] = new $class_name(); } 
          else { $handler_cache_inv[$class_name] = false; }
     }
     $handler = $handler_cache_inv[$class_name];
@@ -378,7 +431,20 @@ function lww_process_inventory_job_batch($job_id, $job_type = 'inventory_import'
     lww_log_system_event('Starte Inventar Batch mit ' . $class_name . ' (Z '.$current_row.' bis ca. '.($current_row+$batch_size).')');
     while ($processed_in_this_batch < $batch_size && !feof($handle)) {
         @set_time_limit(60);
-        $line_number_for_log = $current_row + 1; $data = @fgetcsv($handle);
+        $line_number_for_log = $current_row + 1; 
+        $raw_line = fgets($handle);
+        if ($raw_line === false) break;
+        $data = ($job_type === 'bricklink_inventory_import') ? str_getcsv($raw_line, "\t") : fgetcsv($handle, 0, $delimiter);
+
+        if ($job_type === 'bricklink_inventory_import') {
+            // Workaround für fgets() vs fgetcsv()
+            $data = str_getcsv($raw_line, "\t");
+        } else {
+             // Für BrickOwl-Dateien, die Position im Stream manuell setzen, da wir oben schon gelesen haben
+            fseek($handle, -strlen($raw_line), SEEK_CUR);
+            $data = fgetcsv($handle, 0, $delimiter);
+        }
+
         if ($data === FALSE || $data === null || (count($data) === 1 && ($data[0] === null || trim($data[0]) === ''))) { if (feof($handle)) { lww_log_system_event('Inventar: EOF in while'); break; } $current_row++; continue; }
         
         // Heartbeat
@@ -685,10 +751,10 @@ function lww_process_ebay_sync_batch($job_id) {
             } else {
                 $post_id = wp_insert_post($post_data, true);
                 if (is_wp_error($post_id)) {
-                    lww_log_to_job($job_id, sprintf('FEHLER (eBay-Import): Konnte "%s" nicht erstellen: %s', $post_title, $post_id->get_error_message()));
+                    lww_log_to_job($job_id, sprintf('FEHLER (eBay-Import): Konnte \"%s\" nicht erstellen: %s', $post_title, $post_id->get_error_message()));
                     continue;
                 }
-                lww_log_to_job($job_id, sprintf('INFO (eBay-Import): "%s" (ID: %d) NEU erstellt.', $post_title, $post_id));
+                lww_log_to_job($job_id, sprintf('INFO (eBay-Import): \"%s\" (ID: %d) NEU erstellt.', $post_title, $post_id));
             }
 
             // Meta-Daten speichern
@@ -721,8 +787,8 @@ function lww_process_ebay_sync_batch($job_id) {
 /**
  * Verarbeitet einen Batch eines BrickOwl Preis-Synchronisations-Jobs.
  */
-function lww_process_brickowl_sync_batch($job_id) {
-    lww_log_system_event('--- Start lww_process_brickowl_sync_batch (Job ' . $job_id . ') ---');
+function lww_process_brickowl_price_sync_batch($job_id) {
+    lww_log_system_event('--- Start lww_process_brickowl_price_sync_batch (Job ' . $job_id . ') ---');
 
     $item_ids = get_post_meta($job_id, '_item_ids_to_process', true);
     $total_items = (int) get_post_meta($job_id, '_total_items', true);
@@ -792,6 +858,108 @@ function lww_process_brickowl_sync_batch($job_id) {
     update_post_meta($job_id, '_processed_items', $processed_count);
     lww_log_to_job($job_id, sprintf('Batch beendet. %d von %d Artikeln synchronisiert.', $processed_count, $total_items));
     lww_log_system_event(sprintf('BrickOwl-Sync-Batch beendet. %d/%d verarbeitet.', $processed_count, $total_items));
+}
+
+/**
+ * Verarbeitet einen Batch eines BrickOwl Inventar-Synchronisations-Jobs (Pull).
+ */
+function lww_process_brickowl_inventory_sync_batch($job_id) {
+    lww_log_system_event('--- Start lww_process_brickowl_inventory_sync_batch (Job ' . $job_id . ') ---');
+    $item_ids = get_post_meta($job_id, '_item_ids_to_process', true);
+    $total_items = (int) get_post_meta($job_id, '_total_items', true);
+    $processed_count = (int) get_post_meta($job_id, '_processed_items', true);
+    if (empty($item_ids)) {
+        wp_update_post(['ID' => $job_id, 'post_status' => 'lww_complete']);
+        lww_log_to_job($job_id, 'Bestandsabgleich abgeschlossen: Keine Items zu verarbeiten.');
+        if (get_option('lww_current_running_job_id') == $job_id) delete_option('lww_current_running_job_id');
+        return;
+    }
+
+    $batch_size = apply_filters('lww_brickowl_inventory_sync_batch_size', 15);
+    $items_in_this_batch = array_slice($item_ids, $processed_count, $batch_size);
+
+    if (empty($items_in_this_batch)) {
+        lww_log_to_job($job_id, sprintf('BrickOwl Bestandsabgleich für alle %d Artikel abgeschlossen.', $total_items));
+        wp_update_post(['ID' => $job_id, 'post_status' => 'lww_complete']);
+        if (get_option('lww_current_running_job_id') == $job_id) delete_option('lww_current_running_job_id');
+        return;
+    }
+
+    $api_settings = get_option('lww_api_settings');
+    $brickowl_api = new LWW_BrickOwl_API($api_settings['brickowl_api_key'] ?? '');
+
+    foreach ($items_in_this_batch as $item_id) {
+        $boid = get_post_meta($item_id, '_boid', true);
+        if (empty($boid)) continue;
+        
+        $details = $brickowl_api->get_inventory_item_details($boid);
+        if (is_wp_error($details)) {
+            lww_log_to_job($job_id, sprintf('FEHLER bei Artikel %d (BOID: %s): %s', $item_id, $boid, $details->get_error_message()));
+        } else {
+            update_post_meta($item_id, '_price', $details['price']);
+            update_post_meta($item_id, '_quantity', $details['quantity']);
+            update_post_meta($item_id, '_remarks', $details['remarks']);
+            // Optional: Preis-Historie aktualisieren
+        }
+    }
+
+    $new_processed_count = $processed_count + count($items_in_this_batch);
+    update_post_meta($job_id, '_processed_items', $new_processed_count);
+    lww_log_to_job($job_id, sprintf('Batch beendet. %d von %d Artikeln abgeglichen.', $new_processed_count, $total_items));
+}
+
+/**
+ * Verarbeitet einen Batch eines BrickOwl Katalog-Anreicherungs-Jobs.
+ */
+function lww_process_brickowl_catalog_enrichment_batch($job_id) {
+    lww_log_system_event('--- Start lww_process_brickowl_catalog_enrichment_batch (Job ' . $job_id . ') ---');
+    $item_ids = get_post_meta($job_id, '_item_ids_to_process', true);
+    $total_items = (int) get_post_meta($job_id, '_total_items', true);
+    $processed_count = (int) get_post_meta($job_id, '_processed_items', true);
+    if (empty($item_ids)) {
+        wp_update_post(['ID' => $job_id, 'post_status' => 'lww_complete']);
+        lww_log_to_job($job_id, 'Katalog-Anreicherung abgeschlossen: Keine Items zu verarbeiten.');
+        if (get_option('lww_current_running_job_id') == $job_id) delete_option('lww_current_running_job_id');
+        return;
+    }
+
+    $batch_size = apply_filters('lww_brickowl_catalog_enrichment_batch_size', 20);
+    $items_in_this_batch = array_slice($item_ids, $processed_count, $batch_size);
+
+    if (empty($items_in_this_batch)) {
+        lww_log_to_job($job_id, sprintf('BrickOwl Katalog-Anreicherung für alle %d Einträge abgeschlossen.', $total_items));
+        wp_update_post(['ID' => $job_id, 'post_status' => 'lww_complete']);
+        if (get_option('lww_current_running_job_id') == $job_id) delete_option('lww_current_running_job_id');
+        return;
+    }
+
+    $api_settings = get_option('lww_api_settings');
+    $brickowl_api = new LWW_BrickOwl_API($api_settings['brickowl_api_key'] ?? '');
+
+    foreach ($items_in_this_batch as $post_id) {
+        $post_type = get_post_type($post_id);
+        $item_num = '';
+        $type_for_api = '';
+
+        switch($post_type) {
+            case 'lww_part': $item_num = get_post_meta($post_id, '_lww_part_num', true); $type_for_api = 'part'; break;
+            case 'lww_set': $item_num = get_post_meta($post_id, '_lww_set_num', true); $type_for_api = 'set'; break;
+            case 'lww_minifig': $item_num = get_post_meta($post_id, '_lww_minifig_num', true); $type_for_api = 'minifig'; break;
+        }
+
+        if (empty($item_num)) continue;
+
+        $details = $brickowl_api->get_catalog_details($type_for_api, $item_num);
+        if (!is_wp_error($details)) {
+            update_post_meta($post_id, '_lww_weight_gr', $details['weight']);
+            update_post_meta($post_id, '_lww_dimensions_studs', $details['dimensions']);
+            update_post_meta($post_id, '_lww_brickowl_enriched_timestamp', time());
+        }
+    }
+
+    $new_processed_count = $processed_count + count($items_in_this_batch);
+    update_post_meta($job_id, '_processed_items', $new_processed_count);
+    lww_log_to_job($job_id, sprintf('Batch beendet. %d von %d Katalogeinträgen angereichert.', $new_processed_count, $total_items));
 }
 
 /**

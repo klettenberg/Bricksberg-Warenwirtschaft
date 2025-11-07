@@ -1,6 +1,6 @@
 <?php
 /**
- * Modul: Admin-Seite (Schaltzentrale) (v13.0)
+ * Modul: Admin-Seite (Schaltzentrale) (v14.0)
  * Baut die Admin-Seite mit der neuen hierarchischen Menü-Struktur auf.
  */
 
@@ -58,7 +58,7 @@ function lww_add_admin_menu() {
     add_submenu_page(LWW_PLUGIN_SLUG, '', '<span style="display:block; margin:1px 0 1px -5px; padding:0; height:1px; line-height:1px; background:#4f5d6b;"></span>', 'manage_options', '#');
 
     // --- GRUPPE: JOBS & PROZESSE ---
-    //add_submenu_page(LWW_PLUGIN_SLUG, '', '<span style="display:block; margin:1px 0 1px -5px; padding:0; height:1px; line-height:1px; background:#4f5d6b;"></span>', 'manage_options', '#');
+    add_submenu_page(LWW_PLUGIN_SLUG, '', '<span style="display:block; margin:1px 0 1px -5px; padding:0; height:1px; line-height:1px; background:#4f5d6b;"></span>', 'manage_options', '#');
 
     // Untermenü: Import
     add_submenu_page(
@@ -204,7 +204,7 @@ function lww_render_import_ui_page() {
         <?php 
         lww_render_catalog_import_section();
         lww_render_inventory_import_section();
-        lww_render_ebay_import_section(); // Behalten für Konsistenz, auch wenn es Sync ist
+        lww_render_ebay_import_section();
         ?>
     </div>
     <?php
@@ -284,7 +284,7 @@ function lww_render_inventory_import_section() {
     }
     ?>
     <div class="lww-admin-form lww-card lww-mt-20">
-        <h2><?php _e('Inventar-Import starten (BrickOwl CSV)', 'lego-wawi'); ?></h2>
+        <h2><?php _e('Inventar-Import starten', 'lego-wawi'); ?></h2>
 
         <?php if (!$is_ready): ?>
             <div class="notice notice-error inline lww-notice">
@@ -294,7 +294,8 @@ function lww_render_inventory_import_section() {
                     <?php printf(
                         __('Der Inventar-Import ist erst möglich, wenn die folgenden Katalogdaten importiert wurden: %s. Bitte führe zuerst den Katalog-Import durch.', 'lego-wawi'),
                         '<strong>' . implode(', ', $missing_data) . '</strong>'
-                    ); ?>
+                    );
+                    ?>
                 </p>
             </div>
         <?php else: ?>
@@ -303,6 +304,33 @@ function lww_render_inventory_import_section() {
              </div>
         <?php endif; ?>
 
+        <hr style="margin-top: 20px;">
+
+        <h3><?php _e('BrickLink Inventar-Import', 'lego-wawi'); ?></h3>
+        <p><?php _e('Lade hier deinen BrickLink Inventar-Export als .xml-Datei hoch.', 'lego-wawi'); ?></p>
+        <form action="admin-post.php" method="post" enctype="multipart/form-data">
+            <input type="hidden" name="action" value="lww_upload_bricklink_inventory_xml">
+            <?php wp_nonce_field('lww_bricklink_inventory_import_nonce'); ?>
+            <table class="form-table">
+                <tbody>
+                    <tr>
+                        <th scope="row"><label for="bricklink_inventory_xml_file"><?php _e('BrickLink Inventar XML-Datei', 'lego-wawi'); ?></label></th>
+                        <td><input type="file" id="bricklink_inventory_xml_file" name="bricklink_inventory_xml_file" accept=".xml,text/xml" required></td>
+                    </tr>
+                </tbody>
+            </table>
+            <?php submit_button(
+                __('Neuen BrickLink Import-Job erstellen', 'lego-wawi'),
+                'primary',
+                'submit',
+                true,
+                !$is_ready ? ['disabled' => 'disabled'] : null
+             ); ?>
+        </form>
+
+        <hr style="margin: 20px 0;">
+
+        <h3><?php _e('BrickOwl Inventar-Import', 'lego-wawi'); ?></h3>
         <p><?php _e('Lade hier deinen persönlichen BrickOwl-Inventar-Export oder ein komplettes Backup als CSV-Datei hoch.', 'lego-wawi'); ?></p>
 
         <form action="admin-post.php" method="post" enctype="multipart/form-data">
@@ -318,7 +346,7 @@ function lww_render_inventory_import_section() {
             </table>
             <?php submit_button(
                 __('Neuen Inventar-Import-Job erstellen', 'lego-wawi'),
-                'primary large lww-submit-button',
+                'primary',
                 'submit',
                 true,
                 !$is_ready ? ['disabled' => 'disabled'] : null

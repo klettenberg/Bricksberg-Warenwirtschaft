@@ -1,6 +1,6 @@
 <?php
 /**
- * Modul: Inventar UI & Steuerung (v14.0)
+ * Modul: Inventar UI & Steuerung (v15.0)
  *
  * Rendert die Seite "BrickOwl Inventar verwalten" und zeigt eine
  * WP_List_Table des 'lww_inventory_item' CPTs mit erweiterten, persistenten Filtern.
@@ -54,7 +54,7 @@ class LWW_Inventory_List_Table extends WP_List_Table {
             $this->user_filters = [];
         }
 
-        $possible_filters = ['lww_inventory_location', 'condition_filter', 'wc_status_filter', 'image_status_filter', 'demand_filter'];
+        $possible_filters = ['lww_inventory_location', 'catalog_type_filter', 'condition_filter', 'wc_status_filter', 'image_status_filter', 'demand_filter'];
         $filters_changed = false;
 
         foreach ($possible_filters as $filter_key) {
@@ -138,6 +138,8 @@ class LWW_Inventory_List_Table extends WP_List_Table {
     function column_name($item) {
         $title = $item->post_title;
         $part_id = get_post_meta($item->ID, '_lww_part_id', true);
+        $set_id = get_post_meta($item->ID, '_lww_set_id', true);
+        $minifig_id = get_post_meta($item->ID, '_lww_minifig_id', true);
         $boid = get_post_meta($item->ID, '_boid', true);
         $actions = [];
 
@@ -150,17 +152,18 @@ class LWW_Inventory_List_Table extends WP_List_Table {
             esc_html($title)
         );
 
-        // Link zum verknüpften 'lww_part'
-        if ($part_id) {
-            $part_title = get_the_title($part_id);
-            $actions['view_part'] = sprintf(
+        // Link zum verknüpften Katalog-Eintrag
+        $catalog_id = $part_id ?: $set_id ?: $minifig_id;
+        if ($catalog_id) {
+            $catalog_title = get_the_title($catalog_id);
+            $actions['view_catalog_item'] = sprintf(
                 '<a href="%s" aria-label="%s" style="color: #2271b1;">%s</a>',
-                get_edit_post_link($part_id),
-                esc_attr(sprintf(__('Bearbeite Teil "%s"', 'lego-wawi'), $part_title)),
-                __('Katalog-Teil anzeigen', 'lego-wawi')
+                get_edit_post_link($catalog_id),
+                esc_attr(sprintf(__('Bearbeite Katalogeintrag "%s"', 'lego-wawi'), $catalog_title)),
+                __('Katalog-Eintrag anzeigen', 'lego-wawi')
             );
         } else {
-             $actions['view_part'] = sprintf('<span style="color: #d63638;">%s</span>', __('Kein Katalog-Teil verknüpft', 'lego-wawi'));
+             $actions['view_catalog_item'] = sprintf('<span style="color: #d63638;">%s</span>', __('Kein Katalog-Eintrag verknüpft', 'lego-wawi'));
         }
 
         return sprintf('%s<br><small>(BOID: %s)</small>%s',
@@ -213,15 +216,18 @@ class LWW_Inventory_List_Table extends WP_List_Table {
     
     /**
      * Rendert die Spalte 'thumbnail' (Bild).
-     * Holt das Bild vom verknüpften 'lww_part'.
+     * Holt das Bild vom verknüpften Katalogeintrag.
      */
     function column_thumbnail($item) {
-        $part_id = get_post_meta($item->ID, '_lww_part_id', true);
+        $catalog_id = get_post_meta($item->ID, '_lww_part_id', true)
+                      ?: get_post_meta($item->ID, '_lww_set_id', true)
+                      ?: get_post_meta($item->ID, '_lww_minifig_id', true);
+                      
         $thumb_size = [80, 80];
         $placeholder_style = 'style="width:' . $thumb_size[0] . 'px; height:' . $thumb_size[1] . 'px; background:#f0f0f1; border:1px solid #ddd; text-align:center; display:inline-block; line-height:' . $thumb_size[1] . 'px;"';
 
-        if ($part_id && has_post_thumbnail($part_id)) {
-            return get_the_post_thumbnail($part_id, $thumb_size);
+        if ($catalog_id && has_post_thumbnail($catalog_id)) {
+            return get_the_post_thumbnail($catalog_id, $thumb_size);
         }
         
         return '<span class="dashicons dashicons-format-image" ' . $placeholder_style . ' title="' . __('Kein Bild im Katalog', 'lego-wawi') . '"></span>';
@@ -380,6 +386,25 @@ class LWW_Inventory_List_Table extends WP_List_Table {
         if ($which == "top") {
             echo '<div class="alignleft actions">';
 
+            // --- NEU: Filter für Katalog-Typ ---
+            $catalog_types = [
+                '' => __('Alle Typen', 'lego-wawi'),
+                'lww_part' => __('Teile', 'lego-wawi'),
+                'lww_set' => __('Sets', 'lego-wawi'),
+                'lww_minifig' => __('Minifiguren', 'lego-wawi'),
+            ];
+            $selected_catalog_type = !empty($_REQUEST['catalog_type_filter']) ? sanitize_key($_REQUEST['catalog_type_filter']) : '';
+            echo '<select name="catalog_type_filter">';
+            foreach ($catalog_types as $value => $label) {
+                printf(
+                    '<option value="%s"%s>%s</option>',
+                    esc_attr($value),
+                    selected($selected_catalog_type, $value, false),
+                    esc_html($label)
+                );
+            }
+            echo '</select>';
+
             // --- Filter für Lagerort ---
             $taxonomy = 'lww_inventory_location';
             $selected_location = !empty($_REQUEST[$taxonomy]) ? sanitize_text_field($_REQUEST[$taxonomy]) : '';
@@ -519,6 +544,12 @@ class LWW_Inventory_List_Table extends WP_List_Table {
 
         // Meta Query für Filter
         $args['meta_query'] = ['relation' => 'AND'];
+        if (!empty($_REQUEST['catalog_type_filter'])) {
+            $args['meta_query'][] = [
+                'key' => '_lww_catalog_post_type',
+                'value' => sanitize_key($_REQUEST['catalog_type_filter']),
+            ];
+        }
         if (!empty($_REQUEST['condition_filter'])) {
             $args['meta_query'][] = [
                 'key' => '_condition',

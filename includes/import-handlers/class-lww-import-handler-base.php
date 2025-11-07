@@ -184,6 +184,33 @@ abstract class LWW_Import_Handler_Base implements LWW_Import_Handler_Interface {
         return $this->find_post_by_meta(['lww_set', 'lww_minifig'], '_lww_inventory_id', $inventory_id);
     }
     
+    /**
+     * Findet ein beliebiges Katalog-Item (Teil, Set, Minifigur) anhand seiner BOID oder Nummer.
+     * @param string $boid Die zu suchende ID.
+     * @return array|null Ein Array mit ['id' => post_id, 'type' => post_type] oder null.
+     */
+    protected function find_catalog_item_by_boid($boid) {
+        // 1. Suche nach Teil (Part)
+        $part_id = $this->find_part_by_boid($boid);
+        if ($part_id) {
+            return ['id' => $part_id, 'type' => 'lww_part'];
+        }
+
+        // 2. Suche nach Set
+        $set_id = $this->find_set_by_num($boid);
+        if ($set_id) {
+            return ['id' => $set_id, 'type' => 'lww_set'];
+        }
+
+        // 3. Suche nach Minifigur
+        $minifig_id = $this->find_minifig_by_num($boid);
+        if ($minifig_id) {
+            return ['id' => $minifig_id, 'type' => 'lww_minifig'];
+        }
+
+        return null;
+    }
+
     protected function find_part_by_boid($boid) {
         $meta_keys = ['_lww_part_num', '_lww_rebrickable_id', '_lww_brickowl_id', '_lww_bricklink_id'];
         return $this->find_post_by_any_meta('lww_part', $meta_keys, $boid);

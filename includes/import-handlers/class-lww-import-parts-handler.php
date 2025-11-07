@@ -30,7 +30,8 @@ class LWW_Import_Parts_Handler extends LWW_Import_Handler_Base {
         $part_num = sanitize_text_field($data['part_num'] ?? '');
         $part_name = sanitize_text_field($data['name'] ?? '');
         $category_id_external = intval($data['part_cat_id'] ?? 0);
-        $image_url = esc_url_raw($data['part_img_url'] ?? ''); 
+        $image_url = esc_url_raw($data['part_img_url'] ?? '');
+        $part_material = sanitize_text_field($data['part_material'] ?? ''); // NEU
 
         if (empty($part_num) || empty($part_name)) {
             lww_log_to_job($job_id, sprintf('WARNUNG (Part): Zeile %d übersprungen. PartNum ("%s") oder Name ("%s") fehlt.', $line_number, $part_num, $part_name));
@@ -78,6 +79,7 @@ class LWW_Import_Parts_Handler extends LWW_Import_Handler_Base {
         update_post_meta($post_id, $meta_key, $part_num);
         update_post_meta($post_id, '_lww_part_name', $part_name);
         update_post_meta($post_id, '_lww_rebrickable_id', $part_num);
+        update_post_meta($post_id, '_lww_material', $part_material); // NEU
         
         // Initialisiere leere Meta-Felder
         update_post_meta($post_id, '_lww_short_description', '');

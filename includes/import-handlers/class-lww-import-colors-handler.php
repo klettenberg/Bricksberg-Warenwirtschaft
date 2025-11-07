@@ -45,12 +45,12 @@ class LWW_Import_Colors_Handler extends LWW_Import_Handler_Base {
         } else {
             $post_id = wp_insert_post($post_data, true);
             if (is_wp_error($post_id)) {
-                lww_log_to_job($job_id, sprintf('FEHLER (Farbe): Konnte "%s" nicht erstellen: %s', $color_name, $post_id->get_error_message()));
+                lww_log_to_job($job_id, sprintf('FEHLER (Farbe): Konnte \"%s\" nicht erstellen: %s', $color_name, $post_id->get_error_message()));
                 return;
             }
             $is_new = true;
             // Logging entfernt, um Logs zu verkleinern
-            // lww_log_to_job($job_id, sprintf('INFO (Farbe): "%s" (ID: %d) NEU erstellt.', $color_name, $post_id));
+            // lww_log_to_job($job_id, sprintf('INFO (Farbe): \"%s\" (ID: %d) NEU erstellt.', $color_name, $post_id));
         }
 
         if ($post_id > 0) {

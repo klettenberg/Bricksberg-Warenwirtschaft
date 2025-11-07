@@ -1,6 +1,6 @@
 <?php
 /**
- * Modul: UI für Analyse & KI Tab (v13.0)
+ * Modul: UI für Analyse & KI Tab (v14.0)
  *
  * Rendert den Inhalt für den "Analyse & KI"-Tab, inklusive der Steuerelemente
  * zum Starten von Analyse-Jobs.
@@ -65,7 +65,7 @@ function lww_render_analysis_ui_page() {
                         __('Analyse für Artikel ohne Score starten', 'lego-wawi'),
                         'primary',
                         'submit',
-                        false,
+                        true,
                         $can_analyze ? null : ['disabled' => 'disabled']
                     ); ?>
                 </form>
@@ -78,7 +78,7 @@ function lww_render_analysis_ui_page() {
                         __('Analyse für ALLE Artikel neu starten', 'lego-wawi'),
                         'secondary',
                         'submit',
-                        false,
+                        true,
                         $can_analyze ? null : ['disabled' => 'disabled']
                     ); ?>
                 </form>
@@ -102,7 +102,7 @@ function lww_render_analysis_ui_page() {
                         __('Beschreibungen für Einträge ohne Text generieren', 'lego-wawi'),
                         'primary',
                         'submit',
-                        false,
+                        true,
                         $can_analyze ? null : ['disabled' => 'disabled']
                     ); ?>
                 </form>
@@ -115,7 +115,7 @@ function lww_render_analysis_ui_page() {
                         __('Beschreibungen für ALLE Einträge neu generieren', 'lego-wawi'),
                         'secondary',
                         'submit',
-                        false,
+                        true,
                         $can_analyze ? null : ['disabled' => 'disabled']
                     ); ?>
                 </form>

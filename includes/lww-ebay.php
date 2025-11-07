@@ -1,6 +1,6 @@
 <?php
 /**
- * Modul: eBay Import UI
+ * Modul: eBay Import UI (v14.0)
  *
  * Rendert den "eBay-Import"-Tab und startet den Synchronisations-Job.
  */
@@ -66,11 +66,13 @@ function lww_handle_start_ebay_sync() {
         wp_die(__('Keine Berechtigung.', 'lego-wawi'));
     }
 
+    $redirect_url = admin_url('admin.php?page=lww_import_ui');
+
     $api_settings = get_option('lww_api_settings', []);
     if (empty($api_settings['ebay_app_id']) || empty($api_settings['ebay_auth_token'])) {
         add_settings_error('lww_messages', 'ebay_api_keys_missing', __('eBay API-Schlüssel fehlen in den Einstellungen.', 'lego-wawi'), 'error');
         set_transient('settings_errors', get_settings_errors(), 30);
-        wp_safe_redirect(wp_get_referer());
+        wp_safe_redirect($redirect_url);
         exit;
     }
 
@@ -80,14 +82,14 @@ function lww_handle_start_ebay_sync() {
     if (is_wp_error($listing_ids)) {
         add_settings_error('lww_messages', 'ebay_api_error', __('Fehler beim Abrufen der eBay-Angebote: ', 'lego-wawi') . $listing_ids->get_error_message(), 'error');
         set_transient('settings_errors', get_settings_errors(), 30);
-        wp_safe_redirect(wp_get_referer());
+        wp_safe_redirect($redirect_url);
         exit;
     }
 
     if (empty($listing_ids)) {
         add_settings_error('lww_messages', 'no_ebay_listings', __('Keine aktiven eBay-Angebote zur Synchronisation gefunden.', 'lego-wawi'), 'info');
         set_transient('settings_errors', get_settings_errors(), 30);
-        wp_safe_redirect(wp_get_referer());
+        wp_safe_redirect($redirect_url);
         exit;
     }
     

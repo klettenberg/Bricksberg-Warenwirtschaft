@@ -1,5 +1,61 @@
 # Changelog
 
+## [0.58.0] - 2025-11-07
+### Geändert
+- Das Plugin erfordert nun WooCommerce als zwingend erforderliche Abhängigkeit.
+
+### Hinzugefügt
+- Die Inventar-Ansicht wurde um Filter für Teile, Sets und Minifiguren erweitert.
+- Ein umfassendes Benutzerhandbuch wurde hinzugefügt.
+
+Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokumentiert.
+
+## [0.57.0] - 2025-11-08
+### Hinzugefügt
+- **WooCommerce als Voraussetzung:** Das Plugin prüft nun aktiv, ob WooCommerce installiert und aktiv ist. Ist dies nicht der Fall, wird eine Admin-Notiz angezeigt und das Plugin nicht initialisiert, um Fehler zu vermeiden.
+- **Inventar-Filter nach Typ:** Die Inventar-Verwaltungsseite hat einen neuen Filter erhalten, um die Ansicht schnell auf "Teile", "Sets" oder "Minifiguren" zu beschränken.
+- **Benutzerhandbuch:** Ein umfassendes, für Menschen lesbares `HANDBUCH.md` wurde dem Plugin hinzugefügt, um die Installation, Konfiguration und Nutzung aller Funktionen detailliert zu erklären.
+
+## [0.56.0] - 2025-11-07
+### Hinzugefügt
+- Der BrickOwl-Inventarimport unterstützt nun zusätzliche Datenfelder wie Staffelpreise, Notizen und Kosten.
+
+## [0.52.0] - 2025-11-07
+### Hinzugefügt
+- Der Datenimport für Rebrickable wurde erweitert, um alle verfügbaren Felder zu speichern.
+
+### Behoben
+- Ein Fehler beim Import von BrickOwl-Dateien mit deutschen Spaltenüberschriften wurde behoben.
+
+## [0.51.1] - 2025-11-05
+### Behoben
+- Ein Fehler wurde behoben, der die Anzeige einer Statusmeldung beim Starten von API-Synchronisations-Jobs verhinderte.
+
+## [0.51.0] - 2025-11-05
+### Hinzugefügt
+- Job-Prioritäten sind nun konfigurierbar.
+- Admin-Listen wurden um nützliche, sortierbare Spalten (inkl. Vorschaubildern) erweitert.
+- Neue "API Synchronisation"-Seite für Bestandsabgleich und Katalog-Anreicherung via BrickOwl API.
+
+## [0.50.1] - 2025-11-05
+### Behoben
+- Ein Fehler im Hintergrund-Job-Prozessor wurde korrigiert, der dazu führen konnte, dass Jobs nach dem ersten Verarbeitungs-Batch stecken blieben.
+
+## [0.50.0] - 2025-11-05
+### Geändert
+- Die interne API-Struktur wurde zur Verbesserung der Wartbarkeit und Konsistenz refaktorisiert. Der veraltete Ordner `includes/lww-api/` wird nicht mehr verwendet.
+
+## [0.49.0] - 2025-11-05
+### Hinzugefügt
+- Die BrickOwl-Importlogik wurde erweitert, um Sets und Minifiguren korrekt zu erkennen.
+- Zwei neue Hintergrund-Jobs für den vollständigen Bestandsabgleich und die Anreicherung von Katalogdaten via BrickOwl-API wurden eingeführt.
+- Die Inventar-Übersicht zeigt nun Marktplatz-Badges an.
+
+## [0.48.0] - 2025-11-05
+### Geändert
+- Die Robustheit des CSV-Imports wurde durch eine automatische Erkennung des Trennzeichens (Komma oder Semikolon) verbessert.
+- Das Zeitlimit für Hintergrund-Jobs wurde auf 10 Minuten erhöht, um Abbrüche bei langen Verarbeitungsschritten zu verhindern.
+
 ## [0.47.6] - 2025-11-04
 ### Behoben
 - Die KI-Hintergrundverarbeitung wurde robuster gemacht, indem vor dem Start geprüft wird, ob ein API-Schlüssel konfiguriert ist, um Fehlversuche zu vermeiden.
@@ -240,10 +296,6 @@
 ## [0.19.0] - 2025-10-31
 ### Hinzugefügt
 - Die Platzhalter-Funktion für die KI-gestützte Nachfrageanalyse wurde durch eine voll funktionsfähige Implementierung ersetzt, die Nachfrage-Scores für Inventarartikel berechnet und anzeigt.
-
-## [0.18.0] - 2025-10-31
-### Hinzugefügt
-- Neue, sortierbare Spalte 'Nachfrage (KI)' zur Inventarübersicht hinzugefügt. Diese dient als Vorbereitung für eine zukünftige KI-gestützte Analyse der Artikelnachfrage.
 
 ## [0.18.0] - 2025-11-03
 ### Added
