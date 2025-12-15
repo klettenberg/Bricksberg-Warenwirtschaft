@@ -1,0 +1,26 @@
+# WordPress
+wp-config.php
+wp-content/uploads/
+wp-content/plugins/
+wp-content/themes/
+wp-content/debug.log
+
+# Development
+node_modules/
+.vscode/
+.idea/
+*.log
+*.tmp
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Plugin specific
+/includes/lww-api-log-ui.php # May contain sensitive data
+/cache/
+/temp/
+/chunks/
